@@ -23,7 +23,8 @@
   .textLayer span { position:absolute; color:transparent; white-space:pre; cursor:text; transform-origin:0 0; }
   .textLayer ::selection { background:rgba(255, 200, 0, .55); }
   .pin { position:absolute; width:20px; height:20px; border-radius:10px; background:var(--accent); color:#fff; font-size:11px; line-height:20px; text-align:center; cursor:pointer; transform:translate(-10px,-10px); box-shadow:0 1px 3px rgba(0,0,0,.4); z-index:3; }
-  .pin.resolved { background:#7a9a5e; }
+  .pin.resolved { background:#7a9a5e; opacity:.45; }
+  #hide { font-size:12px; color:var(--muted); white-space:nowrap; cursor:pointer; display:flex; align-items:center; gap:3px; }
   .mark { position:absolute; background:rgba(214,39,40,.14); border:1px solid rgba(214,39,40,.5); pointer-events:none; z-index:2; }
   #side { position:absolute; top:var(--top); right:0; width:var(--side); bottom:0; overflow:auto; background:#fff; border-left:1px solid var(--rule); padding:12px; box-sizing:border-box; font-size:13px; }
   .c { border:1px solid var(--rule); border-radius:6px; padding:8px 10px; margin-bottom:10px; }
@@ -62,6 +63,7 @@
 <body>
 <div id="top"><b>paperdesk</b><span id="paper"></span><span class="grow"></span>
   <span id="status"></span>
+  <label id="hide" title="resolved comments: neither their pins on the page nor their cards in the list"><input type="checkbox" id="hideres"> hide resolved</label>
   <button id="zoomout" class="zoom" title="zoom out">−</button><button id="zoomin" class="zoom" title="zoom in">+</button>
   <button id="toggle">comments</button>
   <button id="reload">reload</button>

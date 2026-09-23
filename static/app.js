@@ -200,10 +200,17 @@ document.addEventListener("selectionchange", () => {
 });
 fab.addEventListener("click", () => { if (pending) openPopup(pending.n, pending.at, pending.quote, pending.rect); });
 
+// resolved comments hidden from the page and the list (the default; remembered per browser)
+const hideBox = document.getElementById("hideres");
+let hideResolved = true; try { hideResolved = localStorage.getItem("paperdesk.hideResolved") !== "0"; } catch (e) {}
+hideBox.checked = hideResolved;
+hideBox.onchange = () => { hideResolved = hideBox.checked; try { localStorage.setItem("paperdesk.hideResolved", hideResolved ? "1" : "0"); } catch (e) {} drawPins(); renderList(); };
+const shown = (c) => !(hideResolved && c.status === "resolved");
+
 function drawPins() {
   for (const n in pages) { pages[n].div.querySelectorAll(".pin, .mark").forEach(x => x.remove()); }
   for (const c of comments) {
-    const p = pages[c.page]; if (!p) continue;
+    const p = pages[c.page]; if (!p || !shown(c)) continue;
     if (c.rect) { const m = document.createElement("div"); m.className = "mark";
       m.style.left = c.rect.x * SCALE + "px"; m.style.top = c.rect.y * SCALE + "px"; m.style.width = c.rect.w * SCALE + "px"; m.style.height = c.rect.h * SCALE + "px"; p.div.appendChild(m); }
     const pin = document.createElement("div"); pin.className = "pin" + (c.status === "resolved" ? " resolved" : ""); pin.textContent = c.id;
@@ -217,7 +224,10 @@ function audioHtml(x) { return x.audio ? `<audio controls preload="none" src="/a
 
 function renderList() {
   list.innerHTML = "";
+  const hidden = comments.filter(c => !shown(c)).length;
+  if (hidden) { const h = document.createElement("div"); h.className = "hint"; h.style.display = "block"; h.textContent = `${hidden} resolved hidden`; list.appendChild(h); }
   for (const c of [...comments].sort((a, b) => b.id - a.id)) {
+    if (!shown(c)) continue;
     const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status; d.id = "c" + c.id;
     const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved`;
     d.innerHTML = `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
