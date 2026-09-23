@@ -19,7 +19,11 @@ buttons and a two-finger pinch zoom the pages, which re-render at the new scale.
 the microphone button records (MediaRecorder; a secure origin is needed, which the tunnel gives), the browser's own
 dictation fills the text live where it has one (Chrome, Safari), and the audio is uploaded and transcribed on the box
 by faster-whisper's small model (CPU, `models/` here) into the comment's text, the dictation kept beside it; the
-player sits under the comment in the desk.
+player sits under the comment in the desk. **Voice needs `pip install faster-whisper` on the box**: without it a
+spoken note is stored with its audio but no words, the server says so at start, the status endpoint and the record
+button carry the warning, the page alerts when such a note is saved, and `python desk.py transcribe` writes the words
+of every wordless note once the model is there (the first note after an install waits for the weights to download;
+the server fetches them at start when it can).
 
 The desk's "rebuild" runs the paper's build command (with SyncTeX) and reloads the PDF when it lands. Comments and
 replies are `comments.jsonl` here, one JSON object per line: id, status, text, quote, page, the point in TeX points

@@ -1,6 +1,7 @@
 """The terminal side of paperdesk: what the person editing the source reads and answers.
 
     python desk.py [desk/paperdesk.toml] list [--all]   the open comments (or every one), each with its anchor and quote
+    python desk.py transcribe [ID]     the words of the voice notes still without any (or one comment's), once a model is installed
     python desk.py show ID             one comment in full, with the source lines around its anchor
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
@@ -79,6 +80,24 @@ def main(argv):
             if c["id"] == int(argv[1]):
                 c["status"] = "resolved"
         save(items); print("resolved")
+    elif cmd == "transcribe":
+        # the words of the voice notes that have none (all of them, or one comment's), once a model is installed
+        import voice
+        models = CONFIG.parent / "models"; st = voice.status(_CFG, models)
+        if not st["ok"]:
+            raise SystemExit(st["reason"])
+        items = load(); todo = voice.pending(items)
+        if len(argv) > 1:
+            todo = [(c, i) for c, i in todo if c["id"] == int(argv[1])]
+        if not todo:
+            print("nothing to transcribe"); return
+        audio = CONFIG.parent / "audio"
+        for c, i in todo:
+            target = c if i is None else c["replies"][i]
+            text = voice.transcribe(audio / target["audio"], _CFG, models)
+            voice.words_into(target, text, st["model"])
+            save(items)
+            print(f"#{c['id']}{'' if i is None else f' reply {i}'}: {target['text']}")
     elif cmd == "watch":
         # a new comment, a new reply by the author, or a voice note whose words landed: one line each
         def state(items):

@@ -122,10 +122,11 @@ async function onRelease(e, n) {
 }
 
 // ---- voice: MediaRecorder for the note, the browser's dictation into the textarea when it has one
-let rec = null;
+let rec = null, VOICE = null;                            // VOICE: the server's verdict on transcription, from /api/status
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 function micButton(ta, onBlob) {
   const b = document.createElement("button"); b.className = "mic"; b.textContent = SR ? "🎤 speak" : "🎤 record"; b.type = "button";
+  if (VOICE && !VOICE.ok) { b.textContent += SR ? " (dictation only)" : " (no transcriber)"; b.title = VOICE.reason; }
   let chunks = [], mr = null, sr = null, t0 = 0, timer = null;
   b.onclick = async () => {
     if (mr) {                                               // stop
@@ -179,7 +180,7 @@ async function openPopup(n, at, quote, rect) {
   row.append(mic, cancel, save);
   save.onclick = async () => {
     const text = ta.value.trim(); if (!text && !blob) return;
-    if (blob) await postVoice(blob, { page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect: rect ? JSON.stringify(rect) : "", dictation: text });
+    if (blob) { const r = await postVoice(blob, { page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect: rect ? JSON.stringify(rect) : "", dictation: text }); if (r && r.warning) alert("paperdesk: " + r.warning); }
     else await api("/api/comments", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect, text }) });
     closePopup(); window.getSelection().removeAllRanges(); await refresh();
   };
@@ -231,7 +232,7 @@ function renderList() {
       if (act === "delete" && !confirm("delete comment #" + c.id + "?")) return;
       if (act === "reply") {
         const text = ta.value.trim(); if (!text && !blob) return;
-        if (blob) await postVoice(blob, { reply_to: c.id, author: WHO.reviewer, dictation: text });
+        if (blob) { const r = await postVoice(blob, { reply_to: c.id, author: WHO.reviewer, dictation: text }); if (r && r.warning) alert("paperdesk: " + r.warning); }
         else await fetch(`/api/comments/${c.id}/reply`, { method: "POST", body: JSON.stringify({ author: WHO.reviewer, text }) });
       } else {
         await fetch(`/api/comments/${c.id}/${act}`, { method: "POST", body: "{}" });
@@ -248,7 +249,7 @@ let lastJson = "";
 async function refresh() {
   comments = await (await fetch("/api/comments")).json();
   const st = await (await fetch("/api/status")).json();
-  document.getElementById("paper").textContent = st.paper; WHO = { reviewer: st.reviewer, editor: st.editor };
+  document.getElementById("paper").textContent = st.paper; WHO = { reviewer: st.reviewer, editor: st.editor }; VOICE = st.voice || null;
   if (st.kind === "docx") document.querySelector("#side .hint").textContent = "Select words on the page, or click a figure or a table, then write. Each comment is anchored to the paragraph of the Word document those words come from, its heading path and the table or image beside it.";
   statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open`;
   if (st.build.ok === false) console.warn(st.build.log);

@@ -255,38 +255,20 @@ def _resolve(page, x_pt, y_pt, quote):
 
 
 # ----------------------------------------------------------------- voice
-_MODEL = {"m": None}
-
-
-def transcribe(path):
-    """The words in a voice note, by faster-whisper's small model on the CPU (loaded once); ``None`` when the model is
-    not installed, in which case the browser's own dictation, if it gave one, is all the text there is."""
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        return None
-    voice = CFG.get("voice", {})
-    if _MODEL["m"] is None:
-        _MODEL["m"] = WhisperModel(voice.get("model", "small"), device="cpu", compute_type="int8", download_root=str(HERE / "models"), cpu_threads=8)
-    segs, _info = _MODEL["m"].transcribe(str(path), vad_filter=True, beam_size=5, initial_prompt=voice.get("glossary") or None)
-    return " ".join(sg.text.strip() for sg in segs).strip()
+import voice as _voice
+MODELS = DESK / "models"
+VOICE = _voice.status(CFG, MODELS)
 
 
 def transcribe_later(cid, reply_index, path):
     """Transcribe in the background and write the words into the comment (or its reply) when they land."""
     def run():
-        text = transcribe(path)
+        text = _voice.transcribe(path, CFG, MODELS)
         with LOCK:
             items = load_comments()
             for c in items:
                 if c["id"] == cid:
-                    target = c if reply_index is None else c["replies"][reply_index]
-                    if text:
-                        target["text"] = text + ("" if not target.get("dictation") else "")
-                        target["transcribed"] = "faster-whisper " + CFG.get("voice", {}).get("model", "small")
-                    else:
-                        target["text"] = target.get("dictation") or ("(voice note, no words recognised)" if text == "" else "(voice note, not transcribed: no model)")
-                        target["transcribed"] = "none available" if text is None else "empty"
+                    _voice.words_into(c if reply_index is None else c["replies"][reply_index], text, VOICE["model"])
             save_comments(items)
     threading.Thread(target=run, daemon=True).start()
 
@@ -362,7 +344,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/status":
             with LOCK:
                 b = dict(BUILD)
-            return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
+            return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, voice=VOICE, pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
                                         n_open=sum(1 for c in load_comments() if c.get("status") == "open")))
         return self._send(404, {"error": "not found"})
 
@@ -422,6 +404,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:                              # noqa: BLE001 -- the recording is kept and named
                 return self._send(500, {"error": f"{type(e).__name__}: {e}; the recording is kept as audio/{stash.name}"})
             transcribe_later(cid, reply_index, AUDIO / fname)
+            if not VOICE["ok"] and not dictation:
+                c = dict(c, warning="stored without words: " + VOICE["reason"])
             return self._send(200, c)
         if u.path == "/api/rebuild":
             return self._send(200, {"started": rebuild()})
@@ -463,6 +447,11 @@ def main():
     if "--host" in sys.argv:
         host = sys.argv[sys.argv.index("--host") + 1]
     print(f"paperdesk on http://{host}:{port}  {KIND} {PAPER / MAIN}  pdf {PDF.name}  comments {STORE}", flush=True)
+    if not VOICE["ok"]:
+        print(f"WARNING voice notes will be stored without words: {VOICE['reason']}", flush=True)
+    else:
+        print(f"voice: faster-whisper {VOICE['model']}" + (f" ({VOICE['reason']})" if VOICE["reason"] else ""), flush=True)
+        threading.Thread(target=lambda: _voice.load(CFG, MODELS), daemon=True).start()
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
