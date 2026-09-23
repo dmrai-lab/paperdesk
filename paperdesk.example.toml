@@ -1,9 +1,12 @@
-# paperdesk: the review desk of one LaTeX paper. Copy to paperdesk.toml and point it at your paper.
-# Paths are relative to this file.
+# paperdesk: the review desk of one document, a LaTeX paper or a Word file. Copy to paperdesk.toml and point it at
+# your document. Paths are relative to this file; comments, voice notes and auth.json live beside it.
 [paper]
-dir = "../my-paper"                 # the folder with the LaTeX sources
+dir = "../my-paper"                 # the folder with the sources
 main = "main.tex"                   # the root file; the PDF is <main>.pdf beside it
 build = "latexmk -pdf -synctex=1 -interaction=nonstopmode -halt-on-error main.tex"   # what the rebuild button runs
+# A Word document instead: the anchor is then the paragraph, resolved through the PDF's text.
+# main = "report.docx"
+# build = "soffice --headless --convert-to pdf --outdir . report.docx"
 
 [people]
 reviewer = "reviewer"               # who comments on the page

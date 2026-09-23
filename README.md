@@ -1,74 +1,49 @@
 # paperdesk
 
-A local review desk for a LaTeX paper you are writing with someone who edits the source for you, whether a
-co-author at a terminal or a coding agent such as Claude Code.
+A local review desk for one document, a LaTeX paper or a Word file: the built PDF as it is, a comment from any
+selection of words or a click on a figure, and every comment anchored to the source -- file, line or paragraph,
+enclosing section, float and label -- beside the words selected. The person editing the source reads the comments
+from the terminal with the anchor and never searches the manuscript for the sentence. A LaTeX paper is anchored by
+SyncTeX; a Word document by the text itself (below).
 
-You read the built PDF as it is, in the browser, on a laptop or a phone. You select a few words, or tap a
-figure, and write or speak a comment. Every comment is anchored by SyncTeX to the source that typeset that
-spot: the file, the line, the enclosing section, the figure or table label if you clicked inside one, and
-the words you selected. The person editing reads the comments from the terminal with that anchor in front
-of them, edits at that spot, answers, and marks the comment resolved; the answer shows up in your sidebar.
-Nobody searches the manuscript for the sentence.
+    python serve.py                # http://127.0.0.1:8765 (paperdesk.toml names the paper; --host 0.0.0.0 to expose)
+    python serve.py other/paperdesk.toml   # a second desk: its comments, audio and auth live beside its config
+    python desk.py list            # the open comments with their anchors
+    python desk.py show 3          # one comment with the source lines around its anchor
+    python desk.py reply 3 "..."   # answer it; the reply shows in the desk
+    python desk.py resolve 3
+    python desk.py watch           # one line per new comment, for a monitor
 
-No LaTeX-to-HTML conversion, no database, no account: one Python file serves the page, one JSON line per
-comment holds the record, and the same file feeds the page and the terminal.
+Pages render as they come into view and are dropped when far off, so a phone holds a few canvases; the "+" and "−"
+buttons and a two-finger pinch zoom the pages, which re-render at the new scale. A comment or a reply can be spoken:
+the microphone button records (MediaRecorder; a secure origin is needed, which the tunnel gives), the browser's own
+dictation fills the text live where it has one (Chrome, Safari), and the audio is uploaded and transcribed on the box
+by faster-whisper's small model (CPU, `models/` here) into the comment's text, the dictation kept beside it; the
+player sits under the comment in the desk.
 
-## Setup
+The desk's "rebuild" runs the paper's build command (with SyncTeX) and reloads the PDF when it lands. Comments and
+replies are `comments.jsonl` here, one JSON object per line: id, status, text, quote, page, the point in TeX points
+from the page's top-left, the selection rectangle, the resolved anchor with the source lines around it, and the
+replies. The paper needs `\synctex=1` in its preamble or `-synctex=1` on its engine.
 
-Requirements: Python 3.11+, a LaTeX distribution with `latexmk` and `synctex` (any TeX Live), and the
-`synctex` output, which means either `\synctex=1` in your preamble or `-synctex=1` on your engine (the
-example build command passes it).
+## A Word document
 
-```
-git clone https://github.com/dmrai-lab/paperdesk
-cd paperdesk
-cp paperdesk.example.toml paperdesk.toml      # point [paper] at your sources, name [people]
-python serve.py                               # http://127.0.0.1:8765
-```
+Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does
+headless (`soffice --headless --convert-to pdf --outdir . report.docx`; no LibreOffice on the machine, then unpack
+its .deb or .rpm bundle into a folder and name that `soffice`). The desk builds the PDF at start when it is missing
+or older than the document, and the "rebuild" button converts again after an edit in Word. A click or a selection
+resolves through the PDF's text: the words selected, or the line of text nearest the click, are searched in the
+document's paragraphs read from `word/document.xml` (body order, table cells included), the longest run of those
+words that occurs deciding the paragraph; identical paragraphs resolve by their rank on the page. The anchor is the
+paragraph's number (`report.docx:¶12` in the desk and `desk.py`), its heading path from the `Heading n` styles, the
+table it sits in or the image beside it, the matched words and their offset, and the neighbouring paragraphs.
+`pdftotext` (poppler) reads the PDF's words with their boxes. Excel and PowerPoint are not covered: a workbook has
+no PDF worth anchoring to, and a deck's PDF would need a per-shape resolver.
 
-Optional:
+## From anywhere
 
-- **Voice notes**: `pip install faster-whisper` (and `ffmpeg` on the path). The microphone button then records
-  in the browser, the browser's own dictation fills the text live where it has one (Chrome, Safari), and the
-  audio is uploaded and transcribed on your machine by Whisper's small model on the CPU, told the jargon in
-  `[voice] glossary`. Measured on synthesised technical sentences: the small model with a glossary matches
-  large-v3 (about 10 % word error, mostly formatting) at a third of the time. A secure origin is needed for
-  the microphone, which localhost and the tunnel both are.
-- **From anywhere**: `./tunnel.sh` opens a Cloudflare quick tunnel (`cloudflared` on the path) and prints a
-  random `trycloudflare.com` address. Put a user and password in `auth.json` (`{"user": "...", "password": "..."}`)
-  and the server asks for them on every route.
-
-## Reading and answering from the terminal
-
-```
-python desk.py list            # the open comments with their anchors and quotes
-python desk.py show 3          # one comment in full, with the source lines around its anchor
-python desk.py reply 3 "..."   # answer it, as the editor named in paperdesk.toml
-python desk.py resolve 3
-python desk.py watch           # one line per new comment, reply or transcribed voice note; for a monitor
-```
-
-With a coding agent: point it at this folder, have it run `desk.py watch` under a file or process monitor
-so each new comment reaches it as an event, and let it answer with `desk.py reply` and `resolve`. The
-anchor tells it where to edit; the quoted words pin the sentence.
-
-## What is where
-
-- `serve.py`: the server (standard library only), the SyncTeX resolution, the build endpoint, the voice upload
-  and transcription.
-- `desk.py`: the terminal client.
-- `static/`: the page, with pdf.js from a CDN; pages render as they scroll into view, zoom by buttons or a
-  two-finger pinch, and fold to a phone layout below 820 px.
-- `comments.jsonl`: the record, one JSON object per line: id, status, text, quote, page, the point in TeX
-  points from the page's top-left, the selection rectangle, the resolved anchor with the source lines around
-  it, the replies, and for a voice note the audio file and how it was transcribed. Commit it if you want the
-  review in the paper's history; it is ignored by default.
-- `audio/`, `models/`: voice notes and the Whisper model, both ignored.
-
-## Limits worth knowing
-
-SyncTeX resolves a point to a source line, which for a long paragraph is the paragraph's line; the quoted
-words pin the sentence. A click on a figure resolves to its `\includegraphics` line and the label of its
-float. Comments are per paper, per folder: one desk serves one `paperdesk.toml`.
-
-MIT licence.
+`./tunnel.sh` opens a Cloudflare quick tunnel to the server and prints its address (a random `trycloudflare.com`
+name that changes at every start; `tunnel.url` keeps the current one). The server asks for the user and password in
+`auth.json` (not committed) whenever that file exists. The layout folds on a phone: the page fills the width, a
+selection raises a floating "comment" button, a tap on a figure opens the popup directly, and the comments sit
+behind the "comments" button.

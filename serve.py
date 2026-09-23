@@ -20,14 +20,17 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 HERE = Path(__file__).resolve().parent
-CFG = tomllib.loads((HERE / "paperdesk.toml").read_text())
-PAPER = (HERE / CFG["paper"]["dir"]).resolve()
+CONFIG = Path(sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].endswith(".toml") else HERE / "paperdesk.toml").resolve()
+DESK = CONFIG.parent                                       # one desk per paper: its config, comments, audio and auth live together
+CFG = tomllib.loads(CONFIG.read_text())
+PAPER = (DESK / CFG["paper"]["dir"]).resolve()
 MAIN = CFG["paper"]["main"]
+KIND = CFG["paper"].get("kind") or ("docx" if MAIN.lower().endswith(".docx") else "latex")
 PDF = PAPER / (Path(MAIN).stem + ".pdf")
-STORE = HERE / "comments.jsonl"
-AUDIO = HERE / "audio"                                     # voice comments, one file per comment or reply
+STORE = DESK / "comments.jsonl"
+AUDIO = DESK / "audio"                                     # voice comments, one file per comment or reply
 AUDIO.mkdir(exist_ok=True)
-AUTH = json.loads((HERE / "auth.json").read_text()) if (HERE / "auth.json").exists() else None   # {"user":..,"password":..}
+AUTH = json.loads((DESK / "auth.json").read_text()) if (DESK / "auth.json").exists() else None   # {"user":..,"password":..}
 LOCK = threading.Lock()
 BUILD = {"running": False, "log": "", "ok": None, "finished": None}
 WHO = CFG.get("people", {})
@@ -102,7 +105,134 @@ def context_of(file, line):
                 source=[dict(line=k + 1, text=lines[k]) for k in range(max(i - 2, 0), min(i + 3, len(lines)))])
 
 
-def resolve(page, x_pt, y_pt):
+# ----------------------------------------------------------------- Word
+_DOCX = {"mtime": None, "paras": None}
+_WORDS = {"mtime": None, "pages": None}
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def docx_paragraphs():
+    """The document's paragraphs in body order, cached by the file's mtime: index, text, style, heading level,
+    the table they sit in, and whether they carry an image. A table's cells contribute their paragraphs in order."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+    p = PAPER / MAIN; mt = p.stat().st_mtime
+    if _DOCX["mtime"] == mt:
+        return _DOCX["paras"]
+    with zipfile.ZipFile(p) as z:
+        root = ET.fromstring(z.read("word/document.xml"))
+    body = root.find(W + "body"); paras = []; n_tables = 0
+
+    def add(el, table):
+        style = el.find(f"{W}pPr/{W}pStyle"); style = style.get(W + "val") if style is not None else ""
+        text = "".join(t.text or "" for t in el.iter(W + "t"))
+        m = re.match(r"(?i)(heading|title)\s*(\d*)", style or "")
+        level = (int(m.group(2)) if m and m.group(2) else (0 if m else None)) if m else None
+        has_image = any(True for _ in el.iter(W + "drawing")) or any(True for _ in el.iter(W + "pict"))
+        paras.append(dict(index=len(paras), text=text, style=style, level=level, table=table, has_image=has_image))
+
+    for el in body:
+        if el.tag == W + "p":
+            add(el, None)
+        elif el.tag == W + "tbl":
+            n_tables += 1
+            for pe in el.iter(W + "p"):
+                add(pe, n_tables)
+    _DOCX.update(mtime=mt, paras=paras)
+    return paras
+
+
+def pdf_lines():
+    """Every line of text on every page of the built PDF with its box in points from the page's top-left
+    (``pdftotext -bbox-layout``), cached by the PDF's mtime: ``{page: [(x0, y0, x1, y1, text), ...]}``."""
+    import xml.etree.ElementTree as ET
+    mt = PDF.stat().st_mtime
+    if _WORDS["mtime"] == mt:
+        return _WORDS["pages"]
+    out = subprocess.run(["pdftotext", "-bbox-layout", str(PDF), "-"], capture_output=True, text=True, timeout=120).stdout
+    root = ET.fromstring(out)
+    ns = "{http://www.w3.org/1999/xhtml}"
+    pages = {}
+    for n, pg in enumerate(root.iter(ns + "page"), 1):
+        lines = []
+        for ln in pg.iter(ns + "line"):
+            words = [w.text or "" for w in ln.iter(ns + "word")]
+            lines.append((float(ln.get("xMin")), float(ln.get("yMin")), float(ln.get("xMax")), float(ln.get("yMax")), " ".join(words)))
+        pages[n] = lines
+    _WORDS.update(mtime=mt, pages=pages)
+    return pages
+
+
+def _norm(t):
+    return re.sub(r"\s+", " ", t or "").strip().lower()
+
+
+def _find_run(words, texts):
+    """The longest run of ``words`` from their start that occurs in one of ``texts``, as ``(probe, hits)``, the
+    start moved along the first six words when nothing from an earlier one occurs; a single word is taken only
+    when it is a whole text (a table cell), and a selection across cells anchors to its first cell."""
+    for start in range(0, min(len(words), 6)):
+        for n in range(min(len(words) - start, 14), 1, -1):
+            probe = " ".join(words[start:start + n])
+            hits = [i for i, t in enumerate(texts) if probe in t]
+            if hits:
+                return probe, hits
+        hits = [i for i, t in enumerate(texts) if t == words[start]]
+        if hits:
+            return words[start], hits
+    return "", []
+
+
+def resolve_docx(page, x_pt, y_pt, quote=""):
+    """The paragraph a point on a page comes from: the words selected, or failing a selection the line of text
+    nearest the click (its neighbours too when it alone is not found), searched in the document's paragraphs as
+    the longest run of those words that occurs. When the run occurs in several paragraphs, the one taken is the
+    occurrence whose rank in the document equals the rank of the clicked line among the PDF's lines holding the
+    same run, so identical paragraphs resolve to the right one. ``line`` is the paragraph's number, ``section`` its
+    heading path, ``float`` a table or an image beside it."""
+    pages = pdf_lines(); lines = pages.get(int(page), [])
+    paras = docx_paragraphs()
+    if not paras:
+        return dict(file=MAIN, line=None, error="no paragraphs")
+    texts = [_norm(pp["text"]) for pp in paras]
+    candidates = [_norm(quote)] if _norm(quote) else []
+    k = None
+    if lines:
+        def dist(l):
+            dx = max(l[0] - x_pt, 0, x_pt - l[2]); dy = max(l[1] - y_pt, 0, y_pt - l[3]); return (dx * dx + dy * dy) ** 0.5
+        k = min(range(len(lines)), key=lambda i: dist(lines[i]))
+        candidates += [_norm(lines[k][4]), _norm(" ".join(l[4] for l in lines[max(k - 1, 0):k + 2]))]
+    used, hits, snippet = "", [], ""
+    for snippet in candidates:
+        used, hits = _find_run(snippet.split(), texts)
+        if hits:
+            break
+    if not hits:
+        return dict(file=MAIN, line=None, error=f"'{(candidates or [''])[0][:60]}' not found in the document", matched=None)
+    if len(hits) > 1 and k is not None:                              # rank the click among the PDF lines holding the run
+        before = [l[4] for pg in sorted(pages) if pg < int(page) for l in pages[pg]] + [l[4] for l in lines[:k]]
+        rank = sum(used in _norm(t) for t in before)
+        i = hits[min(rank, len(hits) - 1)]
+    else:
+        i = hits[0]
+    off = texts[i].find(used)
+    heads = {}
+    for j in range(i, -1, -1):
+        lv = paras[j]["level"]
+        if lv is not None and lv not in heads and all(k > lv for k in heads):
+            heads[lv] = paras[j]["text"]
+    section = " > ".join(heads[k] for k in sorted(heads))
+    near_img = paras[i]["has_image"] or any(paras[j]["has_image"] for j in range(max(i - 1, 0), min(i + 2, len(paras))))
+    flt = "table" if paras[i]["table"] else ("figure" if near_img else None)
+    label = (f"table {paras[i]['table']}" if paras[i]["table"] else (f"image at paragraph {i + 1}" if near_img else None))
+    return dict(file=MAIN, line=i + 1, unit="paragraph", offset=off, matched=used, style=paras[i]["style"], section=section,
+                float=flt, label=label,
+                source=[dict(line=j + 1, text=paras[j]["text"][:300]) for j in range(max(i - 1, 0), min(i + 2, len(paras)))])
+
+
+def resolve(page, x_pt, y_pt, quote=""):
+    if KIND == "docx":
+        return resolve_docx(page, x_pt, y_pt, quote)
     file, line, err = synctex_edit(page, x_pt, y_pt)
     if file is None:
         return dict(file=None, line=None, error=err)
@@ -217,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/status":
             with LOCK:
                 b = dict(BUILD)
-            return self._send(200, dict(paper=str(PAPER), reviewer=REVIEWER, editor=EDITOR, pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
+            return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
                                         n_open=sum(1 for c in load_comments() if c.get("status") == "open")))
         return self._send(404, {"error": "not found"})
 
@@ -227,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api/comments":
             d = self._json()
-            anchor = resolve(d["page"], d["x_pt"], d["y_pt"])
+            anchor = resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", ""))
             with LOCK:
                 items = load_comments()
                 cid = 1 + max([c["id"] for c in items], default=0)
@@ -274,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
                                              dictation=dictation, audio=fname, created=time.strftime("%Y-%m-%d %H:%M:%S")))
                     reply_index = len(c["replies"]) - 1
                 else:
-                    anchor = resolve(q["page"], q["x_pt"], q["y_pt"])
+                    anchor = resolve(q["page"], q["x_pt"], q["y_pt"], q.get("quote", ""))
                     cid = 1 + max([x["id"] for x in items], default=0); fname = f"{cid}.{ext}"
                     c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
                              text=dictation or "(voice note, transcribing)", dictation=dictation, audio=fname, quote=q.get("quote", ""),
@@ -289,15 +419,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"started": rebuild()})
         if u.path == "/api/resolve":                             # a dry resolution, for the popup's preview
             d = self._json()
-            return self._send(200, resolve(d["page"], d["x_pt"], d["y_pt"]))
+            return self._send(200, resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", "")))
         return self._send(404, {"error": "not found"})
 
 
 def main():
     host, port = CFG["server"]["host"], int(CFG["server"]["port"])
-    if len(sys.argv) > 1 and sys.argv[1] == "--host":
-        host = sys.argv[2]
-    print(f"paperdesk on http://{host}:{port}  paper {PAPER}  pdf {PDF.name}  comments {STORE}", flush=True)
+    src = PAPER / MAIN
+    if KIND == "docx" and src.exists() and (not PDF.exists() or PDF.stat().st_mtime < src.stat().st_mtime):
+        print(f"building {PDF.name} from {MAIN}", flush=True); rebuild()
+    if "--host" in sys.argv:
+        host = sys.argv[sys.argv.index("--host") + 1]
+    print(f"paperdesk on http://{host}:{port}  {KIND} {PAPER / MAIN}  pdf {PDF.name}  comments {STORE}", flush=True)
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 

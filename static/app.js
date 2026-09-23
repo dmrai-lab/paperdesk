@@ -157,11 +157,11 @@ async function postVoice(blob, params) {
 
 async function openPopup(n, at, quote, rect) {
   closePopup(); fab.style.display = "none";
-  const anchor = await (await fetch("/api/resolve", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt }) })).json();
+  const anchor = await (await fetch("/api/resolve", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote }) })).json();
   popup = document.createElement("div"); popup.id = "popup";
   const pw = Math.min(320, window.innerWidth * 0.9);
   popup.style.left = Math.max(4, Math.min(at.xv + 12, pages[n].vp.width - pw - 4)) + "px"; popup.style.top = (at.yv + 12) + "px";
-  const where = anchor.file ? `${anchor.file}:${anchor.line}\n${anchor.section || ""}${anchor.float ? " [" + anchor.float + " " + (anchor.label || "") + "]" : ""}` : "unresolved (" + (anchor.error || "") + ")";
+  const where = anchor.file && anchor.line ? `${anchor.file}:${anchor.unit === "paragraph" ? "¶" : ""}${anchor.line}\n${anchor.section || ""}${anchor.float ? " [" + anchor.float + " " + (anchor.label || "") + "]" : ""}` : "unresolved (" + (anchor.error || "") + ")";
   popup.innerHTML = `<div class="where">${escapeHtml(where)}</div>` + (quote ? `<div class="where">“${escapeHtml(quote.slice(0, 160))}”</div>` : "") +
     `<textarea placeholder="your comment, typed or spoken"></textarea><div class="row"></div>`;
   pages[n].div.appendChild(popup);
@@ -211,7 +211,7 @@ function renderList() {
   list.innerHTML = "";
   for (const c of [...comments].sort((a, b) => b.id - a.id)) {
     const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status; d.id = "c" + c.id;
-    const where = a.file ? `${a.file}:${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved`;
+    const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved`;
     d.innerHTML = `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
       `<div>${escapeHtml(c.text)}</div>${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
       `<textarea rows="2" placeholder="reply, typed or spoken"></textarea><div class="actions"><button data-a="reply">reply</button>` +
@@ -242,6 +242,7 @@ async function refresh() {
   comments = await (await fetch("/api/comments")).json();
   const st = await (await fetch("/api/status")).json();
   document.getElementById("paper").textContent = st.paper; WHO = { reviewer: st.reviewer, editor: st.editor };
+  if (st.kind === "docx") document.querySelector("#side .hint").textContent = "Select words on the page, or click a figure or a table, then write. Each comment is anchored to the paragraph of the Word document those words come from, its heading path and the table or image beside it.";
   statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open`;
   if (st.build.ok === false) console.warn(st.build.log);
   if (pdfMtime !== null && st.pdf_mtime !== pdfMtime && !st.build.running) { pdfMtime = st.pdf_mtime; await loadPdf(); }

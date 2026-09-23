@@ -1,6 +1,6 @@
 """The terminal side of paperdesk: what the person editing the source reads and answers.
 
-    python desk.py list [--all]        the open comments (or every one), each with its anchor and quote
+    python desk.py [desk/paperdesk.toml] list [--all]   the open comments (or every one), each with its anchor and quote
     python desk.py show ID             one comment in full, with the source lines around its anchor
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
@@ -12,10 +12,13 @@ import sys
 import time
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-STORE = HERE / "comments.jsonl"
 import tomllib
-_CFG = tomllib.loads((HERE / "paperdesk.toml").read_text()) if (HERE / "paperdesk.toml").exists() else {}
+HERE = Path(__file__).resolve().parent
+_ARGS = [a for a in sys.argv[1:] if a.endswith(".toml")]
+CONFIG = Path(_ARGS[0]).resolve() if _ARGS else HERE / "paperdesk.toml"
+sys.argv = [a for a in sys.argv if not a.endswith(".toml")]
+STORE = CONFIG.parent / "comments.jsonl"
+_CFG = tomllib.loads(CONFIG.read_text()) if CONFIG.exists() else {}
 REVIEWER = _CFG.get("people", {}).get("reviewer", "reviewer")
 EDITOR = _CFG.get("people", {}).get("editor", "editor")
 
@@ -32,7 +35,7 @@ def save(items):
 
 def line_of(c):
     a = c.get("anchor") or {}
-    where = f"{a.get('file')}:{a.get('line')}" if a.get("file") else f"page {c['page']} (unresolved)"
+    where = f"{a.get('file')}:{'¶' if a.get('unit') == 'paragraph' else ''}{a.get('line')}" if a.get("file") and a.get("line") else f"page {c['page']} (unresolved)"
     sec = a.get("section") or ""
     lab = f" [{a['float']} {a.get('label')}]" if a.get("float") else ""
     q = (c.get("quote") or "").strip().replace("\n", " ")
@@ -53,9 +56,11 @@ def main(argv):
         c = next(x for x in load() if x["id"] == int(argv[1]))
         print(json.dumps({k: v for k, v in c.items() if k != "anchor"}, indent=1, ensure_ascii=False))
         a = c.get("anchor") or {}
-        print(f"anchor: {a.get('file')}:{a.get('line')}  section: {a.get('section')}  float: {a.get('float')} {a.get('label')}")
+        unit = "¶" if a.get("unit") == "paragraph" else ""
+        print(f"anchor: {a.get('file')}:{unit}{a.get('line')}  section: {a.get('section')}  float: {a.get('float')} {a.get('label')}"
+              + (f"  matched: '{a.get('matched')}' at offset {a.get('offset')}" if a.get("matched") else ""))
         for s in a.get("source", []):
-            print(f"  {s['line']:5d} | {s['text']}")
+            print(f"  {unit}{s['line']:5d} | {s['text']}")
     elif cmd == "reply":
         items = load()
         for c in items:
