@@ -1,0 +1,10 @@
+paperdesk.toml
+comments.jsonl
+comments.tmp
+audio/
+models/
+auth.json
+serve.log
+tunnel.log
+tunnel.url
+__pycache__/

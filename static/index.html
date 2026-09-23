@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>paperdesk</title>
+<style>
+  :root { --ink:#0b0b0b; --muted:#52514e; --rule:#dcdbd7; --accent:#d62728; --bg:#f7f6f3; --side:380px; --top:42px; }
+  html, body { margin:0; height:100%; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:var(--ink); background:var(--bg); -webkit-text-size-adjust:100%; }
+  #top { position:fixed; top:0; left:0; right:0; height:var(--top); display:flex; align-items:center; gap:8px; padding:0 10px; background:#fff; border-bottom:1px solid var(--rule); z-index:5; font-size:13px; }
+  #top b { font-size:14px; }
+  #top .grow { flex:1; }
+  #paper { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:40vw; }
+  button { font:inherit; padding:6px 10px; border:1px solid var(--rule); background:#fff; border-radius:4px; cursor:pointer; touch-action:manipulation; }
+  button:hover { border-color:var(--muted); }
+  button.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+  #viewer { position:absolute; top:var(--top); left:0; right:var(--side); bottom:0; overflow:auto; padding:12px 0; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; }
+  #stage { position:relative; transform-origin:0 0; }
+  .page.blank { background:#fff; }
+  .page { position:relative; margin:0 auto 14px auto; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.15); }
+  .page canvas { display:block; width:100%; height:100%; }
+  .textLayer { position:absolute; inset:0; overflow:hidden; line-height:1; }
+  .textLayer span { position:absolute; color:transparent; white-space:pre; cursor:text; transform-origin:0 0; }
+  .textLayer ::selection { background:rgba(255, 200, 0, .55); }
+  .pin { position:absolute; width:20px; height:20px; border-radius:10px; background:var(--accent); color:#fff; font-size:11px; line-height:20px; text-align:center; cursor:pointer; transform:translate(-10px,-10px); box-shadow:0 1px 3px rgba(0,0,0,.4); z-index:3; }
+  .pin.resolved { background:#7a9a5e; }
+  .mark { position:absolute; background:rgba(214,39,40,.14); border:1px solid rgba(214,39,40,.5); pointer-events:none; z-index:2; }
+  #side { position:absolute; top:var(--top); right:0; width:var(--side); bottom:0; overflow:auto; background:#fff; border-left:1px solid var(--rule); padding:12px; box-sizing:border-box; font-size:13px; }
+  .c { border:1px solid var(--rule); border-radius:6px; padding:8px 10px; margin-bottom:10px; }
+  .c.resolved { opacity:.55; }
+  .c .where { color:var(--muted); font-size:11.5px; margin-bottom:4px; word-break:break-all; }
+  .c .quote { font-style:italic; color:var(--muted); border-left:2px solid var(--rule); padding-left:6px; margin:4px 0; }
+  .c .reply { margin-top:6px; padding:6px 8px; background:var(--bg); border-radius:4px; white-space:pre-wrap; }
+  .c .reply.claude { background:#eef3fb; }
+  .c .actions { margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
+  .c textarea { width:100%; box-sizing:border-box; font:inherit; margin-top:6px; }
+  #popup { position:absolute; z-index:6; width:min(320px, 90vw); background:#fff; border:1px solid var(--muted); border-radius:6px; padding:10px; box-shadow:0 4px 18px rgba(0,0,0,.25); font-size:13px; }
+  #popup .where { color:var(--muted); font-size:11.5px; white-space:pre-wrap; margin-bottom:6px; word-break:break-all; }
+  #popup textarea { width:100%; box-sizing:border-box; height:70px; font:inherit; font-size:16px; }
+  #popup .row { display:flex; gap:6px; justify-content:flex-end; margin-top:6px; }
+  #fab { position:fixed; z-index:6; display:none; padding:8px 14px; border-radius:20px; background:var(--accent); color:#fff; border:0; box-shadow:0 2px 8px rgba(0,0,0,.35); font-size:14px; }
+  #status { color:var(--muted); font-size:12px; white-space:nowrap; }
+  .zoom { padding:6px 9px; }
+  .mic { border-radius:16px; }
+  .mic.rec { background:var(--accent); color:#fff; border-color:var(--accent); }
+  audio { width:100%; height:28px; margin-top:4px; }
+  .dict { color:var(--muted); font-size:11.5px; }
+  .hint { color:var(--muted); font-size:12px; margin-bottom:10px; }
+  #toggle { display:none; }
+  @media (max-width: 820px) {
+    :root { --side: 0px; }
+    #paper { display:none; }
+    #toggle { display:inline-block; }
+    #side { display:none; width:100%; left:0; z-index:4; }
+    body.side #side { display:block; }
+    body.side #viewer { display:none; }
+    .hint { display:none; }
+    #viewer { padding:6px 0; }
+  }
+</style>
+</head>
+<body>
+<div id="top"><b>paperdesk</b><span id="paper"></span><span class="grow"></span>
+  <span id="status"></span>
+  <button id="zoomout" class="zoom" title="zoom out">−</button><button id="zoomin" class="zoom" title="zoom in">+</button>
+  <button id="toggle">comments</button>
+  <button id="reload">reload</button>
+  <button id="rebuild" class="primary">rebuild</button>
+</div>
+<div id="viewer"><div id="stage"></div></div>
+<div id="side"><div class="hint">Select words on the page, or click a figure, then write. Each comment is anchored to the source line SyncTeX resolves, the enclosing section and float, and the words you selected.</div><div id="list"></div></div>
+<button id="fab">comment</button>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

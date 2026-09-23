@@ -1,0 +1,20 @@
+# paperdesk: the review desk of one LaTeX paper. Copy to paperdesk.toml and point it at your paper.
+# Paths are relative to this file.
+[paper]
+dir = "../my-paper"                 # the folder with the LaTeX sources
+main = "main.tex"                   # the root file; the PDF is <main>.pdf beside it
+build = "latexmk -pdf -synctex=1 -interaction=nonstopmode -halt-on-error main.tex"   # what the rebuild button runs
+
+[people]
+reviewer = "reviewer"               # who comments on the page
+editor = "editor"                   # who answers from the terminal (a person, or an agent such as Claude Code)
+
+[server]
+host = "127.0.0.1"                  # 0.0.0.0 to reach it on the network; see tunnel.sh for the internet
+port = 8765
+
+[voice]
+# Voice notes are transcribed on the machine by faster-whisper (pip install faster-whisper) when it is installed.
+# The glossary is the vocabulary the transcriber is told to expect: put your field's jargon, names and acronyms here.
+model = "small"
+glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, results"
