@@ -52,6 +52,10 @@
     :root { --side: 0px; }
     #paper { display:none; }
     #toggle { display:inline-block; }
+    #hide span { display:none; }                /* the checkbox alone on a phone; its tooltip says what it hides */
+    #top { gap:5px; padding:0 6px; }
+    #top b { display:none; }                    /* the name is the tab's; the bar's width is the phone's */
+    #top button { padding:4px 7px; }
     #side { display:none; width:100%; left:0; z-index:4; }
     body.side #side { display:block; }
     body.side #viewer { display:none; }
@@ -63,7 +67,7 @@
 <body>
 <div id="top"><b>paperdesk</b><span id="paper"></span><span class="grow"></span>
   <span id="status"></span>
-  <label id="hide" title="resolved comments: neither their pins on the page nor their cards in the list"><input type="checkbox" id="hideres"> hide resolved</label>
+  <label id="hide" title="resolved comments: neither their pins on the page nor their cards in the list"><input type="checkbox" id="hideres"><span>hide resolved</span></label>
   <button id="zoomout" class="zoom" title="zoom out">−</button><button id="zoomin" class="zoom" title="zoom in">+</button>
   <button id="toggle">comments</button>
   <button id="reload">reload</button>
