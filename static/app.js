@@ -150,9 +150,16 @@ function micButton(ta, onBlob) {
 }
 function stopRecorder() { if (rec) { try { rec.mr.stop(); } catch (e) {} rec = null; } }
 
+async function api(path, init) {                       // a failed request is shown, never swallowed
+  const r = await fetch(path, init);
+  let body = null; try { body = await r.json(); } catch (e) { body = null; }
+  if (!r.ok) { const msg = (body && body.error) || `${r.status} ${r.statusText}`; statusEl.textContent = "failed: " + msg; alert("paperdesk: " + msg); throw new Error(msg); }
+  return body;
+}
+
 async function postVoice(blob, params) {
   const q = new URLSearchParams(params).toString();
-  return (await fetch("/api/voice?" + q, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob })).json();
+  return api("/api/voice?" + q, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob });
 }
 
 async function openPopup(n, at, quote, rect) {
@@ -173,7 +180,7 @@ async function openPopup(n, at, quote, rect) {
   save.onclick = async () => {
     const text = ta.value.trim(); if (!text && !blob) return;
     if (blob) await postVoice(blob, { page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect: rect ? JSON.stringify(rect) : "", dictation: text });
-    else await fetch("/api/comments", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect, text }) });
+    else await api("/api/comments", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect, text }) });
     closePopup(); window.getSelection().removeAllRanges(); await refresh();
   };
   if (!MOBILE) ta.focus();

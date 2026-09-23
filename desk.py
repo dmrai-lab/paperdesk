@@ -12,7 +12,13 @@ import sys
 import time
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:                                # Python 3.10: the same parser as the tomli backport
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        raise SystemExit("paperdesk reads its config with tomllib (Python 3.11+); on an older Python run: pip install tomli")
 HERE = Path(__file__).resolve().parent
 _ARGS = [a for a in sys.argv[1:] if a.endswith(".toml")]
 CONFIG = Path(_ARGS[0]).resolve() if _ARGS else HERE / "paperdesk.toml"

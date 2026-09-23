@@ -6,7 +6,7 @@ enclosing section, float and label -- beside the words selected. The person edit
 from the terminal with the anchor and never searches the manuscript for the sentence. A LaTeX paper is anchored by
 SyncTeX; a Word document by the text itself (below).
 
-    python serve.py                # http://127.0.0.1:8765 (paperdesk.toml names the paper; --host 0.0.0.0 to expose)
+    python serve.py                # http://127.0.0.1:8765 (paperdesk.toml names the paper; --host 0.0.0.0 to expose; Python 3.11+, or pip install tomli)
     python serve.py other/paperdesk.toml   # a second desk: its comments, audio and auth live beside its config
     python desk.py list            # the open comments with their anchors
     python desk.py show 3          # one comment with the source lines around its anchor
@@ -24,7 +24,10 @@ player sits under the comment in the desk.
 The desk's "rebuild" runs the paper's build command (with SyncTeX) and reloads the PDF when it lands. Comments and
 replies are `comments.jsonl` here, one JSON object per line: id, status, text, quote, page, the point in TeX points
 from the page's top-left, the selection rectangle, the resolved anchor with the source lines around it, and the
-replies. The paper needs `\synctex=1` in its preamble or `-synctex=1` on its engine.
+replies. The paper needs `\synctex=1` in its preamble or `-synctex=1` on its engine. The server and the client are
+standard library only on Python 3.11 and later; Python 3.10 needs `pip install tomli` for the config, and nothing else.
+A comment whose anchor cannot be resolved is still saved, unanchored, with the reason; a voice note is written to
+disk before anything else is done with the request, and a request that fails is shown on the page with its reason.
 
 ## A Word document
 

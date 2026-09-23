@@ -14,7 +14,13 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:                                # Python 3.10: the same parser as the tomli backport
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        raise SystemExit("paperdesk reads its config with tomllib (Python 3.11+); on an older Python run: pip install tomli")
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -169,13 +175,14 @@ def _norm(t):
 
 def _find_run(words, texts):
     """The longest run of ``words`` from their start that occurs in one of ``texts``, as ``(probe, hits)``, the
-    start moved along the first six words when nothing from an earlier one occurs; a single word is taken only
-    when it is a whole text (a table cell), and a selection across cells anchors to its first cell."""
+    start moved along the first six words when nothing from an earlier one occurs; a run of two words counts
+    only where it occurs once, a single word only when it is a whole text (a table cell), and a selection across
+    cells anchors to its first cell."""
     for start in range(0, min(len(words), 6)):
         for n in range(min(len(words) - start, 14), 1, -1):
             probe = " ".join(words[start:start + n])
             hits = [i for i, t in enumerate(texts) if probe in t]
-            if hits:
+            if hits and (n > 2 or len(hits) == 1):                # two words anchor only where they occur once
                 return probe, hits
         hits = [i for i, t in enumerate(texts) if t == words[start]]
         if hits:
@@ -231,6 +238,14 @@ def resolve_docx(page, x_pt, y_pt, quote=""):
 
 
 def resolve(page, x_pt, y_pt, quote=""):
+    """The anchor of a point on a page, or an unanchored record naming why: a comment is never lost to its anchor."""
+    try:
+        return _resolve(int(page), float(x_pt), float(y_pt), quote or "")
+    except Exception as e:                                      # noqa: BLE001 -- whatever the resolver raised, the comment is kept
+        return dict(file=None, line=None, error=f"{type(e).__name__}: {e}")
+
+
+def _resolve(page, x_pt, y_pt, quote):
     if KIND == "docx":
         return resolve_docx(page, x_pt, y_pt, quote)
     file, line, err = synctex_edit(page, x_pt, y_pt)
@@ -354,6 +369,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorised():
             return
+        try:
+            self._post()
+        except Exception as e:                                  # noqa: BLE001 -- the page shows the reason instead of a silent failure
+            self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
+    def _post(self):
         u = urlparse(self.path)
         if u.path == "/api/comments":
             d = self._json()
@@ -395,24 +416,11 @@ class Handler(BaseHTTPRequestHandler):
             ext = {"audio/webm": "webm", "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/ogg": "ogg", "audio/wav": "wav"}.get(
                 (self.headers.get("Content-Type") or "").split(";")[0].strip(), "bin")
             dictation = q.get("dictation", "").strip()
-            with LOCK:
-                items = load_comments()
-                if q.get("reply_to"):
-                    cid = int(q["reply_to"]); c = next(x for x in items if x["id"] == cid)
-                    fname = f"{cid}-r{len(c['replies'])}.{ext}"
-                    c["replies"].append(dict(author=q.get("author", REVIEWER), text=dictation or "(voice note, transcribing)",
-                                             dictation=dictation, audio=fname, created=time.strftime("%Y-%m-%d %H:%M:%S")))
-                    reply_index = len(c["replies"]) - 1
-                else:
-                    anchor = resolve(q["page"], q["x_pt"], q["y_pt"], q.get("quote", ""))
-                    cid = 1 + max([x["id"] for x in items], default=0); fname = f"{cid}.{ext}"
-                    c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
-                             text=dictation or "(voice note, transcribing)", dictation=dictation, audio=fname, quote=q.get("quote", ""),
-                             page=int(q["page"]), x_pt=float(q["x_pt"]), y_pt=float(q["y_pt"]),
-                             rect=(json.loads(q["rect"]) if q.get("rect") else None), anchor=anchor, replies=[])
-                    items.append(c); reply_index = None
-                (AUDIO / fname).write_bytes(blob)
-                save_comments(items)
+            stash = AUDIO / f"incoming-{int(time.time() * 1000)}.{ext}"; stash.write_bytes(blob)   # the recording first
+            try:
+                c, cid, reply_index, fname = self._voice_record(q, ext, dictation, stash)
+            except Exception as e:                              # noqa: BLE001 -- the recording is kept and named
+                return self._send(500, {"error": f"{type(e).__name__}: {e}; the recording is kept as audio/{stash.name}"})
             transcribe_later(cid, reply_index, AUDIO / fname)
             return self._send(200, c)
         if u.path == "/api/rebuild":
@@ -421,6 +429,30 @@ class Handler(BaseHTTPRequestHandler):
             d = self._json()
             return self._send(200, resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", "")))
         return self._send(404, {"error": "not found"})
+
+    def _voice_record(self, q, ext, dictation, stash):
+        """The comment or reply a voice note becomes, saved with the recording moved to its name."""
+        with LOCK:
+            items = load_comments()
+            if q.get("reply_to"):
+                cid = int(q["reply_to"]); c = next((x for x in items if x["id"] == cid), None)
+                if c is None:
+                    raise KeyError(f"no comment {cid} to reply to")
+                fname = f"{cid}-r{len(c['replies'])}.{ext}"
+                c["replies"].append(dict(author=q.get("author", REVIEWER), text=dictation or "(voice note, transcribing)",
+                                         dictation=dictation, audio=fname, created=time.strftime("%Y-%m-%d %H:%M:%S")))
+                reply_index = len(c["replies"]) - 1
+            else:
+                anchor = resolve(q["page"], q["x_pt"], q["y_pt"], q.get("quote", ""))
+                cid = 1 + max([x["id"] for x in items], default=0); fname = f"{cid}.{ext}"
+                c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
+                         text=dictation or "(voice note, transcribing)", dictation=dictation, audio=fname, quote=q.get("quote", ""),
+                         page=int(q["page"]), x_pt=float(q["x_pt"]), y_pt=float(q["y_pt"]),
+                         rect=(json.loads(q["rect"]) if q.get("rect") else None), anchor=anchor, replies=[])
+                items.append(c); reply_index = None
+            stash.rename(AUDIO / fname)
+            save_comments(items)
+        return c, cid, reply_index, fname
 
 
 def main():
