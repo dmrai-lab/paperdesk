@@ -23,7 +23,11 @@ player sits under the comment in the desk. **Voice needs `pip install faster-whi
 spoken note is stored with its audio but no words, the server says so at start, the status endpoint and the record
 button carry the warning, the page alerts when such a note is saved, and `python desk.py transcribe` writes the words
 of every wordless note once the model is there (the first note after an install waits for the weights to download;
-the server fetches them at start when it can).
+the server fetches them at start when it can). The model runs on a CUDA device when CTranslate2 sees one (float16;
+about five times realtime on a mid-range card) and on the CPU otherwise (int8, half the cores; a little slower than
+realtime, so a minute of speech is a minute of waiting); `[voice] device`, `compute_type` and `cpu_threads` override
+the choice, and the startup line says where it landed. With a GPU, `model = "large-v3"` is affordable and worth it
+where a misheard word could change an edit.
 
 The desk's "rebuild" runs the paper's build command (with SyncTeX) and reloads the PDF when it lands. Comments and
 replies are `comments.jsonl` here, one JSON object per line: id, status, text, quote, page, the point in TeX points

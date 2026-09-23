@@ -19,5 +19,8 @@ port = 8765
 [voice]
 # Voice notes are transcribed on the machine by faster-whisper (pip install faster-whisper) when it is installed.
 # The glossary is the vocabulary the transcriber is told to expect: put your field's jargon, names and acronyms here.
-model = "small"
+model = "small"                     # large-v3 is affordable on a GPU and hears jargon better
+# device = "auto"                   # auto (a CUDA device when CTranslate2 sees one, else the CPU) | cpu | cuda
+# compute_type = "int8"             # default: float16 on cuda, int8 on cpu
+# cpu_threads = 4                   # cpu only; default half the cores, at most eight
 glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, results"

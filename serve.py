@@ -460,7 +460,7 @@ def main():
     if not VOICE["ok"]:
         print(f"WARNING voice notes will be stored without words: {VOICE['reason']}", flush=True)
     else:
-        print(f"voice: faster-whisper {VOICE['model']}" + (f" ({VOICE['reason']})" if VOICE["reason"] else ""), flush=True)
+        print(f"voice: faster-whisper {VOICE['model']} on {VOICE['device']}" + (f" ({VOICE['reason']})" if VOICE["reason"] else ""), flush=True)
         threading.Thread(target=lambda: _voice.load(CFG, MODELS), daemon=True).start()
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
