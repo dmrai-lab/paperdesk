@@ -54,7 +54,7 @@ async function linkLayer(page, vp) {                        // one <a> per link 
     const el = document.createElement("a"); el.className = "plink";
     el.style.left = x + "px"; el.style.top = y + "px"; el.style.width = Math.abs(r[2] - r[0]) + "px"; el.style.height = Math.abs(r[3] - r[1]) + "px";
     if (a.url) { el.href = a.url; el.target = "_blank"; el.rel = "noopener"; el.title = a.url; }
-    else { el.href = "#"; el.title = "go to"; el.onclick = async (ev) => { ev.preventDefault(); await goToDest(a.dest); }; }
+    else { el.href = "#"; el.title = "go to " + (typeof a.dest === "string" ? a.dest : "reference"); el.onclick = async (ev) => { ev.preventDefault(); await goToDest(a.dest); }; }
     layer.appendChild(el);
   }
   return layer;
@@ -64,8 +64,12 @@ async function goToDest(dest) {                             // an internal refer
   try {
     const d = typeof dest === "string" ? await doc.getDestination(dest) : dest; if (!d) return;
     const idx = await doc.getPageIndex(d[0]); const p = pages[idx + 1]; if (!p) return;
-    p.div.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (d[1] && d[1].name === "XYZ" && typeof d[3] === "number") viewer.scrollBy(0, (p.vp1.height - d[3]) * SCALE - 60);
+    const kind = d[1] && d[1].name; let topPdf = null;            // the destination's height on the page, PDF units from the bottom
+    if (kind === "XYZ" && typeof d[3] === "number") topPdf = d[3];
+    else if ((kind === "FitH" || kind === "FitBH") && typeof d[2] === "number") topPdf = d[2];
+    const yIn = topPdf === null ? 0 : (p.vp1.height - topPdf) * SCALE * currentCssScale();
+    const vr = viewer.getBoundingClientRect(), pr = p.div.getBoundingClientRect();
+    viewer.scrollTo({ top: viewer.scrollTop + (pr.top - vr.top) + yIn - 16, behavior: "smooth" });
   } catch (e) {}
 }
 
