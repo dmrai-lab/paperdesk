@@ -251,7 +251,8 @@ async function refresh() {
   const st = await (await fetch("/api/status")).json();
   document.getElementById("paper").textContent = st.paper; WHO = { reviewer: st.reviewer, editor: st.editor }; VOICE = st.voice || null;
   if (st.kind === "docx") document.querySelector("#side .hint").textContent = "Select words on the page, or click a figure or a table, then write. Each comment is anchored to the paragraph of the Word document those words come from, its heading path and the table or image beside it.";
-  statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open`;
+  statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open` + (st.watched ? "" : " · unwatched");
+  statusEl.title = st.watched ? `${st.editor} is watching` : `nobody is watching this desk: comments are saved but ${st.editor} will not see them until "desk.py watch" runs`;
   if (st.build.ok === false) console.warn(st.build.log);
   if (pdfMtime !== null && st.pdf_mtime !== pdfMtime && !st.build.running) { pdfMtime = st.pdf_mtime; await loadPdf(); }
   pdfMtime = st.pdf_mtime;

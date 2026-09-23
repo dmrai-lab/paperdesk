@@ -1,11 +1,13 @@
 """The terminal side of paperdesk: what the person editing the source reads and answers.
 
+    python desk.py watch               KEEP THIS RUNNING when the editor is an agent: one line per new comment, per reply
+                                       by the reviewer, and per voice note whose words land; its heartbeat is what the
+                                       page and the server call "watched"
     python desk.py [desk/paperdesk.toml] list [--all]   the open comments (or every one), each with its anchor and quote
-    python desk.py transcribe [ID]     the words of the voice notes still without any (or one comment's), once a model is installed
     python desk.py show ID             one comment in full, with the source lines around its anchor
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
-    python desk.py watch               print each new comment as it arrives (one line per event; for a monitor)
+    python desk.py transcribe [ID]     the words of the voice notes still without any (or one comment's), once a model is installed
 """
 import json
 import os
@@ -120,6 +122,10 @@ def main(argv):
                 elif seen[k] != text and not text.startswith("(voice note"):
                     print(f"#{k[1]} {'voice note transcribed' if k[0] == 'c' else 'reply transcribed'}: {text}", flush=True)
             seen = now
+            try:
+                (CONFIG.parent / "watch.heartbeat").touch()      # the server and the page read this as "watched"
+            except OSError:
+                pass
             time.sleep(2)
     else:
         print(__doc__)

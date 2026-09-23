@@ -8,11 +8,11 @@ SyncTeX; a Word document by the text itself (below).
 
     python serve.py                # http://127.0.0.1:8765 (paperdesk.toml names the paper; --host 0.0.0.0 to expose; Python 3.11+, or pip install tomli)
     python serve.py other/paperdesk.toml   # a second desk: its comments, audio and auth live beside its config
+    python desk.py watch           # KEEP RUNNING: one line per new comment, reply or transcription (the agent's inbox)
     python desk.py list            # the open comments with their anchors
     python desk.py show 3          # one comment with the source lines around its anchor
     python desk.py reply 3 "..."   # answer it; the reply shows in the desk
     python desk.py resolve 3
-    python desk.py watch           # one line per new comment, for a monitor
 
 Pages render as they come into view and are dropped when far off, so a phone holds a few canvases; the "+" and "−"
 buttons and a two-finger pinch zoom the pages, which re-render at the new scale. A comment or a reply can be spoken:
@@ -32,6 +32,23 @@ replies. The paper needs `\synctex=1` in its preamble or `-synctex=1` on its eng
 standard library only on Python 3.11 and later; Python 3.10 needs `pip install tomli` for the config, and nothing else.
 A comment whose anchor cannot be resolved is still saved, unanchored, with the reason; a voice note is written to
 disk before anything else is done with the request, and a request that fails is shown on the page with its reason.
+
+## Working with a coding agent
+
+The editor at the terminal is often an agent (Claude Code, or any other), and an agent perceives nothing between its
+turns: without a watcher the reviewer's comments land in `comments.jsonl` and nobody knows. So the loop is, in order:
+
+1. `python serve.py` (and `./tunnel.sh` for a phone).
+2. **Arm `python desk.py watch` inside whatever wakes the agent** (Claude Code: a Monitor on that command, re-armed
+   when it expires) before anything else. It prints one line per new comment, per reply by the reviewer, and per
+   voice note whose words land, since a spoken comment first appears as `(voice note, transcribing)` and gets its
+   text a moment later. Its heartbeat is what the server and the page call "watched": the status line on the page
+   reads `unwatched` while nothing is running, so the reviewer sees the dead drop too, and the server says so at
+   start.
+3. On each line: `desk.py show ID`, edit the source at the anchor, rebuild, `desk.py reply ID "..."`,
+   `desk.py resolve ID`.
+
+`AGENTS.md` in this folder states the same loop for an agent that reads the folder (`CLAUDE.md` includes it).
 
 ## A Word document
 

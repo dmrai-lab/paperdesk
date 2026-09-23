@@ -274,6 +274,12 @@ def transcribe_later(cid, reply_index, path):
 
 
 # ----------------------------------------------------------------- the build
+def watched():
+    """Whether a ``desk.py watch`` is running on this desk: its heartbeat file touched within the last ten seconds."""
+    hb = DESK / "watch.heartbeat"
+    return hb.exists() and time.time() - hb.stat().st_mtime < 10
+
+
 def rebuild():
     with LOCK:
         if BUILD["running"]:
@@ -344,7 +350,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/status":
             with LOCK:
                 b = dict(BUILD)
-            return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, voice=VOICE, pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
+            return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, voice=VOICE, watched=watched(), pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
                                         n_open=sum(1 for c in load_comments() if c.get("status") == "open")))
         return self._send(404, {"error": "not found"})
 
@@ -447,6 +453,10 @@ def main():
     if "--host" in sys.argv:
         host = sys.argv[sys.argv.index("--host") + 1]
     print(f"paperdesk on http://{host}:{port}  {KIND} {PAPER / MAIN}  pdf {PDF.name}  comments {STORE}", flush=True)
+    if not watched():
+        cfg = f" {CONFIG}" if CONFIG != HERE / "paperdesk.toml" else ""
+        print(f"no watcher: run  python desk.py{cfg} watch  (and keep it running) so comments reach the editor; "
+              "until then the page says 'unwatched'", flush=True)
     if not VOICE["ok"]:
         print(f"WARNING voice notes will be stored without words: {VOICE['reason']}", flush=True)
     else:
