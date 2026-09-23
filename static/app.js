@@ -43,7 +43,31 @@ function layout() {                                        // every page box at 
 
 function far(n) { const r = pages[n].div.getBoundingClientRect(); return r.bottom < -3000 || r.top > window.innerHeight + 3000; }
 
-function unrender(n) { const p = pages[n]; p.div.querySelectorAll("canvas, .textLayer").forEach(x => x.remove()); p.rendered = 0; p.tl = null; p.div.classList.add("blank"); }
+function unrender(n) { const p = pages[n]; p.div.querySelectorAll("canvas, .textLayer, .linkLayer").forEach(x => x.remove()); p.rendered = 0; p.tl = null; p.div.classList.add("blank"); }
+
+async function linkLayer(page, vp) {                        // one <a> per link annotation, placed on the viewport
+  const layer = document.createElement("div"); layer.className = "linkLayer";
+  let anns = []; try { anns = await page.getAnnotations(); } catch (e) { return layer; }
+  for (const a of anns) {
+    if (a.subtype !== "Link" || (!a.url && !a.dest)) continue;
+    const r = vp.convertToViewportRectangle(a.rect); const x = Math.min(r[0], r[2]), y = Math.min(r[1], r[3]);
+    const el = document.createElement("a"); el.className = "plink";
+    el.style.left = x + "px"; el.style.top = y + "px"; el.style.width = Math.abs(r[2] - r[0]) + "px"; el.style.height = Math.abs(r[3] - r[1]) + "px";
+    if (a.url) { el.href = a.url; el.target = "_blank"; el.rel = "noopener"; el.title = a.url; }
+    else { el.href = "#"; el.title = "go to"; el.onclick = async (ev) => { ev.preventDefault(); await goToDest(a.dest); }; }
+    layer.appendChild(el);
+  }
+  return layer;
+}
+
+async function goToDest(dest) {                             // an internal reference: scroll to its page and, when given, its height
+  try {
+    const d = typeof dest === "string" ? await doc.getDestination(dest) : dest; if (!d) return;
+    const idx = await doc.getPageIndex(d[0]); const p = pages[idx + 1]; if (!p) return;
+    p.div.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (d[1] && d[1].name === "XYZ" && typeof d[3] === "number") viewer.scrollBy(0, (p.vp1.height - d[3]) * SCALE - 60);
+  } catch (e) {}
+}
 
 async function render(n) {
   const p = pages[n]; if (p.rendered === SCALE || p.rendering) return;
@@ -61,9 +85,10 @@ async function render(n) {
     s.style.left = t[4] + "px"; s.style.top = (t[5] - fontH) + "px"; s.style.fontSize = fontH + "px"; s.style.fontFamily = "sans-serif";
     tl.appendChild(s);
   }
+  const links = await linkLayer(p.page, vp);                   // the PDF's own links: URLs open, references jump
   if (vp !== p.vp) { p.rendering = false; return; }            // the scale moved while rendering: the observer renders again
-  p.div.querySelectorAll("canvas, .textLayer").forEach(x => x.remove());
-  p.div.prepend(tl); p.div.prepend(canvas); p.div.classList.remove("blank");
+  p.div.querySelectorAll("canvas, .textLayer, .linkLayer").forEach(x => x.remove());
+  p.div.prepend(links); p.div.prepend(tl); p.div.prepend(canvas); p.div.classList.remove("blank");
   for (const s of tl.children) { const w = s.getBoundingClientRect().width / currentCssScale(); if (w > 0 && s.dataset.w) s.style.transform = `scaleX(${(parseFloat(s.dataset.w) * SCALE) / w})`; }
   p.tl = tl; p.rendered = SCALE; p.rendering = false;
 }
@@ -115,7 +140,7 @@ function selectionInfo() {
 }
 
 async function onRelease(e, n) {
-  if (e.target.closest(".pin") || e.target.closest("#popup") || pinch) return;
+  if (e.target.closest(".pin") || e.target.closest(".plink") || e.target.closest("#popup") || pinch) return;
   const si = selectionInfo();
   if (si) return openPopup(si.n, si.at, si.quote, si.rect);
   return openPopup(n, toPt(n, e.clientX, e.clientY), "", null);

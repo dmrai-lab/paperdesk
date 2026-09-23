@@ -22,6 +22,9 @@
   .textLayer { position:absolute; inset:0; overflow:hidden; line-height:1; }
   .textLayer span { position:absolute; color:transparent; white-space:pre; cursor:text; transform-origin:0 0; }
   .textLayer ::selection { background:rgba(255, 200, 0, .55); }
+  .linkLayer { position:absolute; inset:0; z-index:2; pointer-events:none; }
+  .plink { position:absolute; display:block; pointer-events:auto; cursor:pointer; border-radius:2px; }
+  .plink:hover { background:rgba(30, 110, 220, .14); }
   .pin { position:absolute; width:20px; height:20px; border-radius:10px; background:var(--accent); color:#fff; font-size:11px; line-height:20px; text-align:center; cursor:pointer; transform:translate(-10px,-10px); box-shadow:0 1px 3px rgba(0,0,0,.4); z-index:3; }
   .pin.resolved { background:#7a9a5e; opacity:.45; }
   #hide { font-size:12px; color:var(--muted); white-space:nowrap; cursor:pointer; display:flex; align-items:center; gap:3px; }
