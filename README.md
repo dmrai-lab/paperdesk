@@ -54,6 +54,29 @@ turns: without a watcher the reviewer's comments land in `comments.jsonl` and no
 
 `AGENTS.md` in this folder states the same loop for an agent that reads the folder (`CLAUDE.md` includes it).
 
+## Review agents
+
+Agents can review the paper too, and their comments land on the same desk beside yours, anchored the same way. An
+agent reads the `.tex`, not the page, so it anchors from the source: it quotes words verbatim from a file and the
+desk finds them, takes the line they start on, and asks `synctex view` where that line was typeset, so the comment
+gets a pin on the PDF like a clicked one. A quote that is not in the file is refused, which keeps an agent from
+commenting on words the paper does not contain.
+
+    python desk.py add --file sections/theory.tex --quote "words copied from the file" \
+        --severity major --category correctness --suggest "replacement text" --author ai:theory "what is wrong and why"
+    python desk.py add --jsonl review.jsonl     # one {"file", "quote", "text", "severity", ...} object per line
+    python desk.py list --proposed [--author ai:theory]
+    python desk.py accept 41 42                 # proposed -> open: work to do
+    python desk.py dismiss 43 "already stated in Sec. 2"
+
+`POST /api/comments` takes the same keys (`file`, `quote`, `text`, optional `line`, `severity` of
+error/major/minor/style, `category`, `suggestion`, `author`) in place of `page`/`x_pt`/`y_pt`. An agent's comment
+starts `proposed`: the page shows it with a square pin (dashed until accepted) and its tags, a filter shows yours,
+the agents' or those to triage, and accept or dismiss settles it. A dismissed comment is kept, so each reviewer's
+hit rate can be counted. `desk.py watch` stays quiet about proposed comments and speaks when the reviewer accepts
+one on the page. Writes to `comments.jsonl` take a file lock, so several agents can add at once. Source anchoring
+is for LaTeX desks.
+
 ## A Word document
 
 Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does

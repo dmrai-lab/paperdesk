@@ -9,3 +9,4 @@ tunnel.log
 tunnel.url
 __pycache__/
 watch.heartbeat
+comments.lock

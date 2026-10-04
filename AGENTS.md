@@ -13,5 +13,8 @@ You are the editor of the document this desk serves; the reviewer comments on th
    (`desk.py` says nothing about builds; the page's rebuild button or the config's build command does), then
    `python desk.py reply ID "..."` and `python desk.py resolve ID`.
 4. `python desk.py list` shows what is open; `python desk.py transcribe` recovers voice notes that got no words.
+5. Review agents comment from the source, not the page: `python desk.py add --file F --quote "verbatim words" --severity
+   S --category C --author ai:ROLE "text"` (or `add --jsonl FILE`); see `python desk.py` for the full form. Their
+   comments start `proposed`; triage with `desk.py list --proposed`, `accept ID ...`, `dismiss ID ... "why"`.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.

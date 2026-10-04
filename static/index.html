@@ -4,20 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>paperdesk</title>
+<script>
+  (function () { let t = null; try { t = localStorage.getItem("paperdesk.theme"); } catch (e) {}
+    if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = t; })();
+</script>
 <style>
-  :root { --ink:#0b0b0b; --muted:#52514e; --rule:#dcdbd7; --accent:#d62728; --bg:#f7f6f3; --side:380px; --top:42px; }
+  :root { --ink:#0b0b0b; --muted:#52514e; --rule:#dcdbd7; --accent:#d62728; --bg:#f7f6f3; --panel:#fff; --soft-blue:#eef3fb; --soft-green:#f1f7ee; --side:380px; --top:42px; color-scheme:light; }
+  :root[data-theme="dark"] { --ink:#e6e4df; --muted:#a19f99; --rule:#3a3935; --bg:#141413; --panel:#1e1e1c; --soft-blue:#1d2736; --soft-green:#1d281b; color-scheme:dark; }
+  :root[data-theme="dark"] .page canvas { filter:invert(.9) hue-rotate(180deg); }   /* night reading: the page inverted, hues kept */
+  :root[data-theme="dark"] .page { box-shadow:0 1px 6px rgba(0,0,0,.6); }
   html, body { margin:0; height:100%; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color:var(--ink); background:var(--bg); -webkit-text-size-adjust:100%; }
-  #top { position:fixed; top:0; left:0; right:0; height:var(--top); display:flex; align-items:center; gap:8px; padding:0 10px; background:#fff; border-bottom:1px solid var(--rule); z-index:5; font-size:13px; }
+  #top { position:fixed; top:0; left:0; right:0; height:var(--top); display:flex; align-items:center; gap:8px; padding:0 10px; background:var(--panel); border-bottom:1px solid var(--rule); z-index:5; font-size:13px; }
   #top b { font-size:14px; }
   #top .grow { flex:1; }
   #paper { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:40vw; }
-  button { font:inherit; padding:6px 10px; border:1px solid var(--rule); background:#fff; border-radius:4px; cursor:pointer; touch-action:manipulation; }
+  button { font:inherit; padding:6px 10px; border:1px solid var(--rule); background:var(--panel); color:var(--ink); border-radius:4px; cursor:pointer; touch-action:manipulation; }
   button:hover { border-color:var(--muted); }
-  button.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+  button.primary { background:var(--ink); color:var(--panel); border-color:var(--ink); }
   #viewer { position:absolute; top:var(--top); left:0; right:var(--side); bottom:0; overflow:auto; padding:12px 0; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; }
   #stage { position:relative; transform-origin:0 0; }
-  .page.blank { background:#fff; }
-  .page { position:relative; margin:0 auto 14px auto; background:#fff; box-shadow:0 1px 6px rgba(0,0,0,.15); }
+  .page.blank { background:var(--panel); }
+  .page { position:relative; margin:0 auto 14px auto; background:var(--panel); box-shadow:0 1px 6px rgba(0,0,0,.15); }
   .page canvas { display:block; width:100%; height:100%; }
   .textLayer { position:absolute; inset:0; overflow:hidden; line-height:1; }
   .textLayer span { position:absolute; color:transparent; white-space:pre; cursor:text; transform-origin:0 0; }
@@ -28,17 +36,29 @@
   .pin { position:absolute; width:20px; height:20px; border-radius:10px; background:var(--accent); color:#fff; font-size:11px; line-height:20px; text-align:center; cursor:pointer; transform:translate(-10px,-10px); box-shadow:0 1px 3px rgba(0,0,0,.4); z-index:3; }
   .pin.resolved { background:#7a9a5e; opacity:.45; }
   #hide { font-size:12px; color:var(--muted); white-space:nowrap; cursor:pointer; display:flex; align-items:center; gap:3px; }
+  .pin.agent { background:#2f5d9e; border-radius:3px; }
+  .pin.agent.sev-error { background:#8e1b1b; } .pin.agent.sev-major { background:#c4561d; }
+  .pin.agent.sev-minor { background:#2f5d9e; } .pin.agent.sev-style { background:#6b6a66; }
+  .pin.proposed { opacity:.75; outline:2px dashed #fff; outline-offset:-4px; }
+  .mark.agent { background:none; border:none; border-bottom:2px solid rgba(47,93,158,.45); }
+  .c .tags { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px; }
+  .tag { font-size:11px; padding:1px 6px; border-radius:8px; background:var(--bg); border:1px solid var(--rule); }
+  .tag.who { background:var(--soft-blue); } .tag.sev-error { background:#8e1b1b; color:#fff; } .tag.sev-major { background:#c4561d; color:#fff; }
+  .c.proposed { border-style:dashed; } .c.dismissed { opacity:.45; }
+  .c .suggest { margin-top:4px; padding:4px 6px; background:var(--soft-green); border-radius:4px; white-space:pre-wrap; font-size:12.5px; }
+  #who { font:inherit; font-size:12px; padding:3px; }
   .mark { position:absolute; background:rgba(214,39,40,.14); border:1px solid rgba(214,39,40,.5); pointer-events:none; z-index:2; }
-  #side { position:absolute; top:var(--top); right:0; width:var(--side); bottom:0; overflow:auto; background:#fff; border-left:1px solid var(--rule); padding:12px; box-sizing:border-box; font-size:13px; }
+  #side { position:absolute; top:var(--top); right:0; width:var(--side); bottom:0; overflow:auto; background:var(--panel); border-left:1px solid var(--rule); padding:12px; box-sizing:border-box; font-size:13px; }
   .c { border:1px solid var(--rule); border-radius:6px; padding:8px 10px; margin-bottom:10px; }
   .c.resolved { opacity:.55; }
   .c .where { color:var(--muted); font-size:11.5px; margin-bottom:4px; word-break:break-all; }
   .c .quote { font-style:italic; color:var(--muted); border-left:2px solid var(--rule); padding-left:6px; margin:4px 0; }
   .c .reply { margin-top:6px; padding:6px 8px; background:var(--bg); border-radius:4px; white-space:pre-wrap; }
-  .c .reply.claude { background:#eef3fb; }
+  .c .reply.claude { background:var(--soft-blue); }
+  textarea, select { background:var(--panel); color:var(--ink); border:1px solid var(--rule); }
   .c .actions { margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
   .c textarea { width:100%; box-sizing:border-box; font:inherit; margin-top:6px; }
-  #popup { position:absolute; z-index:6; width:min(320px, 90vw); background:#fff; border:1px solid var(--muted); border-radius:6px; padding:10px; box-shadow:0 4px 18px rgba(0,0,0,.25); font-size:13px; }
+  #popup { position:absolute; z-index:6; width:min(320px, 90vw); background:var(--panel); border:1px solid var(--muted); border-radius:6px; padding:10px; box-shadow:0 4px 18px rgba(0,0,0,.25); font-size:13px; }
   #popup .where { color:var(--muted); font-size:11.5px; white-space:pre-wrap; margin-bottom:6px; word-break:break-all; }
   #popup textarea { width:100%; box-sizing:border-box; height:70px; font:inherit; font-size:16px; }
   #popup .row { display:flex; gap:6px; justify-content:flex-end; margin-top:6px; }
@@ -70,14 +90,17 @@
 <body>
 <div id="top"><b>paperdesk</b><span id="paper"></span><span class="grow"></span>
   <span id="status"></span>
+  <select id="who" title="whose comments to show"><option value="all">all</option><option value="mine">mine</option><option value="agents">agents</option><option value="proposed">to triage</option></select>
   <label id="hide" title="resolved comments: neither their pins on the page nor their cards in the list"><input type="checkbox" id="hideres"><span>hide resolved</span></label>
+  <button id="theme" class="zoom" title="night mode">☾</button>
   <button id="zoomout" class="zoom" title="zoom out">−</button><button id="zoomin" class="zoom" title="zoom in">+</button>
   <button id="toggle">comments</button>
+  <a id="download" href="/pdf?download" title="download the built PDF"><button tabindex="-1">pdf ⤓</button></a>
   <button id="reload">reload</button>
   <button id="rebuild" class="primary">rebuild</button>
 </div>
 <div id="viewer"><div id="stage"></div></div>
-<div id="side"><div class="hint">Select words on the page, or click a figure, then write. Each comment is anchored to the source line SyncTeX resolves, the enclosing section and float, and the words you selected.</div><div id="list"></div></div>
+<div id="side"><div class="hint">Select words on the page, or click a figure, then write. Each comment is anchored to the source line SyncTeX resolves, the enclosing section and float, and the words you selected. Review agents' comments (square pins, dashed while proposed) come from the source; accept turns one into work, dismiss sets it aside.</div><div id="list"></div></div>
 <button id="fab">comment</button>
 <script type="module" src="/app.js"></script>
 </body>

@@ -44,71 +44,24 @@ REVIEWER = WHO.get("reviewer", "reviewer")            # who comments on the page
 EDITOR = WHO.get("editor", "editor")                  # who answers from the terminal (a person or an agent)
 
 
-# ----------------------------------------------------------------- the store
+# ----------------------------------------------------------------- the store and the anchor
+import anchor as _anchor
+import store as _store
+
+
 def load_comments():
-    if not STORE.exists():
-        return []
-    return [json.loads(l) for l in STORE.read_text().splitlines() if l.strip()]
+    return _store.load(STORE)
 
 
 def save_comments(items):
-    tmp = STORE.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in items))
-    os.replace(tmp, STORE)
+    _store.save(STORE, items)
 
 
-# ----------------------------------------------------------------- the anchor
-def synctex_edit(page, x_pt, y_pt):
-    """``(file, line)`` of the source that typeset the point ``(x, y)`` in TeX points from the page's top-left."""
-    try:
-        out = subprocess.run(["synctex", "edit", "-o", f"{int(page)}:{float(x_pt):.2f}:{float(y_pt):.2f}:{PDF}"],
-                             capture_output=True, text=True, timeout=20, cwd=PAPER).stdout
-    except Exception as e:                                   # noqa: BLE001
-        return None, None, f"synctex failed: {e}"
-    m_in, m_ln = re.search(r"^Input:(.*)$", out, re.M), re.search(r"^Line:(\d+)$", out, re.M)
-    if not m_in or not m_ln:
-        return None, None, out[-300:]
-    f = Path(m_in.group(1).strip())
-    try:
-        f = f.resolve().relative_to(PAPER)
-    except ValueError:
-        pass
-    return str(f), int(m_ln.group(1)), None
-
-
-SECTION_RE = re.compile(r"\\(section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}")
-
-
-def context_of(file, line):
-    """The enclosing section path, figure or table label, and the source lines around ``line``."""
-    p = PAPER / file
-    if not p.exists():
-        return {}
-    lines = p.read_text().splitlines()
-    i = min(max(int(line) - 1, 0), len(lines) - 1)
-    path, env, label = {}, None, None
-    for j in range(i, -1, -1):
-        for m in SECTION_RE.finditer(lines[j]):
-            kind = m.group(1)
-            if kind not in path:
-                path[kind] = m.group(2)
-        if env is None:
-            if re.search(r"\\begin\{(figure|table|figure\*|table\*)\}", lines[j]):
-                env = re.search(r"\\begin\{(figure|table|figure\*|table\*)\}", lines[j]).group(1)
-                for k in range(j, min(j + 40, len(lines))):
-                    m = re.search(r"\\label\{([^}]*)\}", lines[k])
-                    if m:
-                        label = m.group(1); break
-                    if re.search(r"\\end\{(figure|table|figure\*|table\*)\}", lines[k]):
-                        break
-            elif re.search(r"\\end\{(figure|table|figure\*|table\*)\}", lines[j]):
-                env = False                                   # the point is after a float, not in it
-        if all(k in path for k in ("section",)) and "subsection" in path:
-            break
-    order = ["section", "subsection", "subsubsection", "paragraph"]
-    return dict(section=" > ".join(path[k] for k in order if k in path),
-                float=(env if env else None), label=label,
-                source=[dict(line=k + 1, text=lines[k]) for k in range(max(i - 2, 0), min(i + 3, len(lines)))])
+def _resolve_latex(page, x_pt, y_pt):
+    file, line, err = _anchor.synctex_edit(PAPER, PDF, page, x_pt, y_pt)
+    if file is None:
+        return dict(file=None, line=None, error=err)
+    return dict(file=file, line=line, **_anchor.context_of(PAPER, file, line))
 
 
 # ----------------------------------------------------------------- Word
@@ -248,10 +201,7 @@ def resolve(page, x_pt, y_pt, quote=""):
 def _resolve(page, x_pt, y_pt, quote):
     if KIND == "docx":
         return resolve_docx(page, x_pt, y_pt, quote)
-    file, line, err = synctex_edit(page, x_pt, y_pt)
-    if file is None:
-        return dict(file=None, line=None, error=err)
-    return dict(file=file, line=line, **context_of(file, line))
+    return _resolve_latex(page, x_pt, y_pt)
 
 
 # ----------------------------------------------------------------- voice
@@ -264,8 +214,7 @@ def transcribe_later(cid, reply_index, path):
     """Transcribe in the background and write the words into the comment (or its reply) when they land."""
     def run():
         text = _voice.transcribe(path, CFG, MODELS)
-        with LOCK:
-            items = load_comments()
+        with _store.locked(STORE) as items:
             for c in items:
                 if c["id"] == cid:
                     _voice.words_into(c if reply_index is None else c["replies"][reply_index], text, VOICE["model"])
@@ -299,10 +248,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):                                  # quiet
         pass
 
-    def _send(self, code, body, ctype="application/json"):
+    def _send(self, code, body, ctype="application/json", headers=None):
         data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(data)))
+        for k, v in (headers or {}).items():
+            self.send_header(k, v)
         self.send_header("Cache-Control", "no-store")
         self.end_headers(); self.wfile.write(data)
 
@@ -338,7 +289,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/pdf":
             if not PDF.exists():
                 return self._send(404, {"error": "no PDF built yet"})
-            return self._send(200, PDF.read_bytes(), "application/pdf")
+            save = {"Content-Disposition": f'attachment; filename="{PDF.name}"'} if "download" in u.query else None
+            return self._send(200, PDF.read_bytes(), "application/pdf", save)
         if u.path == "/api/comments":
             return self._send(200, load_comments())
         if u.path.startswith("/audio/"):
@@ -351,7 +303,8 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 b = dict(BUILD)
             return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, voice=VOICE, watched=watched(), pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
-                                        n_open=sum(1 for c in load_comments() if c.get("status") == "open")))
+                                        n_open=sum(1 for c in load_comments() if c.get("status") == "open"),
+                                        n_proposed=sum(1 for c in load_comments() if c.get("status") == "proposed")))
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -366,21 +319,30 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api/comments":
             d = self._json()
+            if "file" in d and "page" not in d:              # from the source, by an agent: anchored by its quoted words
+                if KIND != "latex":
+                    return self._send(400, {"error": "source-anchored comments need a LaTeX desk"})
+                try:
+                    c = _anchor.comment_from_source(PAPER, PDF, d, d.get("author") or "agent")
+                except (LookupError, ValueError) as e:
+                    return self._send(400, {"error": str(e)})
+                with _store.locked(STORE) as items:
+                    c = dict(id=_store.next_id(items), **c)
+                    items.append(c); save_comments(items)
+                return self._send(200, c)
             anchor = resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", ""))
-            with LOCK:
-                items = load_comments()
-                cid = 1 + max([c["id"] for c in items], default=0)
+            with _store.locked(STORE) as items:
+                cid = _store.next_id(items)
                 c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
                          text=d.get("text", ""), quote=d.get("quote", ""), page=int(d["page"]),
                          x_pt=float(d["x_pt"]), y_pt=float(d["y_pt"]), rect=d.get("rect"), anchor=anchor, replies=[])
                 items.append(c); save_comments(items)
             return self._send(200, c)
-        m = re.match(r"^/api/comments/(\d+)/(reply|resolve|reopen|delete)$", u.path)
+        m = re.match(r"^/api/comments/(\d+)/(reply|resolve|reopen|accept|dismiss|delete)$", u.path)
         if m:
             cid, action = int(m.group(1)), m.group(2)
             d = self._json()
-            with LOCK:
-                items = load_comments()
+            with _store.locked(STORE) as items:
                 for c in items:
                     if c["id"] == cid:
                         if action == "reply":
@@ -390,6 +352,10 @@ class Handler(BaseHTTPRequestHandler):
                             c["status"] = "resolved"
                         elif action == "reopen":
                             c["status"] = "open"
+                        elif action == "accept":                 # a proposed comment becomes work to do
+                            c["status"] = "open"; c["accepted_by"] = d.get("author", REVIEWER)
+                        elif action == "dismiss":                # kept, so a reviewer's hit rate can be counted
+                            c["status"] = "dismissed"
                         elif action == "delete":
                             items = [x for x in items if x["id"] != cid]
                         break
@@ -422,8 +388,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _voice_record(self, q, ext, dictation, stash):
         """The comment or reply a voice note becomes, saved with the recording moved to its name."""
-        with LOCK:
-            items = load_comments()
+        with _store.locked(STORE) as items:
             if q.get("reply_to"):
                 cid = int(q["reply_to"]); c = next((x for x in items if x["id"] == cid), None)
                 if c is None:
@@ -434,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
                 reply_index = len(c["replies"]) - 1
             else:
                 anchor = resolve(q["page"], q["x_pt"], q["y_pt"], q.get("quote", ""))
-                cid = 1 + max([x["id"] for x in items], default=0); fname = f"{cid}.{ext}"
+                cid = _store.next_id(items); fname = f"{cid}.{ext}"
                 c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
                          text=dictation or "(voice note, transcribing)", dictation=dictation, audio=fname, quote=q.get("quote", ""),
                          page=int(q["page"]), x_pt=float(q["x_pt"]), y_pt=float(q["y_pt"]),

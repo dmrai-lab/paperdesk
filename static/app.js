@@ -234,16 +234,27 @@ const hideBox = document.getElementById("hideres");
 let hideResolved = true; try { hideResolved = localStorage.getItem("paperdesk.hideResolved") !== "0"; } catch (e) {}
 hideBox.checked = hideResolved;
 hideBox.onchange = () => { hideResolved = hideBox.checked; try { localStorage.setItem("paperdesk.hideResolved", hideResolved ? "1" : "0"); } catch (e) {} drawPins(); renderList(); };
-const shown = (c) => !(hideResolved && c.status === "resolved");
+// whose comments: everyone's, the reviewer's own, the review agents', or the agents' still waiting for triage
+const whoSel = document.getElementById("who");
+let who = "all"; try { who = localStorage.getItem("paperdesk.who") || "all"; } catch (e) {}
+whoSel.value = who;
+whoSel.onchange = () => { who = whoSel.value; try { localStorage.setItem("paperdesk.who", who); } catch (e) {} drawPins(); renderList(); };
+const isAgent = (c) => !!c.author && c.author !== WHO.reviewer;
+const shown = (c) => !(hideResolved && (c.status === "resolved" || c.status === "dismissed"))
+  && (who === "all" || (who === "mine" && !isAgent(c)) || (who === "agents" && isAgent(c)) || (who === "proposed" && c.status === "proposed"));
 
 function drawPins() {
   for (const n in pages) { pages[n].div.querySelectorAll(".pin, .mark").forEach(x => x.remove()); }
+  const fan = {};                                          // agents' pins on one line sit side by side in the right margin
   for (const c of comments) {
     const p = pages[c.page]; if (!p || !shown(c)) continue;
-    if (c.rect) { const m = document.createElement("div"); m.className = "mark";
+    let px = c.x_pt;
+    if (isAgent(c) && c.rect) { const k = c.page + ":" + Math.round(c.y_pt); fan[k] = (fan[k] || 0) + 1; px = c.rect.x + c.rect.w + 4 + 22 * fan[k]; }
+    if (c.rect) { const m = document.createElement("div"); m.className = "mark" + (isAgent(c) ? " agent" : "");
       m.style.left = c.rect.x * SCALE + "px"; m.style.top = c.rect.y * SCALE + "px"; m.style.width = c.rect.w * SCALE + "px"; m.style.height = c.rect.h * SCALE + "px"; p.div.appendChild(m); }
-    const pin = document.createElement("div"); pin.className = "pin" + (c.status === "resolved" ? " resolved" : ""); pin.textContent = c.id;
-    pin.style.left = c.x_pt * SCALE + "px"; pin.style.top = c.y_pt * SCALE + "px"; pin.title = c.text;
+    const pin = document.createElement("div"); pin.textContent = c.id;
+    pin.className = "pin" + (c.status === "resolved" || c.status === "dismissed" ? " resolved" : "") + (isAgent(c) ? " agent sev-" + (c.severity || "none") : "") + (c.status === "proposed" ? " proposed" : "");
+    pin.style.left = px * SCALE + "px"; pin.style.top = c.y_pt * SCALE + "px"; pin.title = c.text;
     pin.onclick = (ev) => { ev.stopPropagation(); if (MOBILE) document.body.classList.add("side"); document.getElementById("c" + c.id)?.scrollIntoView({ behavior: "smooth", block: "center" }); };
     p.div.appendChild(pin);
   }
@@ -259,22 +270,27 @@ function renderList() {
     if (!shown(c)) continue;
     const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status; d.id = "c" + c.id;
     const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved`;
-    d.innerHTML = `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
-      `<div>${escapeHtml(c.text)}</div>${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
+    const tags = isAgent(c) ? `<div class="tags"><span class="tag who">${escapeHtml(c.author)}</span>` + (c.severity ? `<span class="tag sev-${escapeHtml(c.severity)}">${escapeHtml(c.severity)}</span>` : "")
+      + (c.category ? `<span class="tag">${escapeHtml(c.category)}</span>` : "") + (c.status !== "open" ? `<span class="tag">${c.status}</span>` : "") + `</div>` : "";
+    d.innerHTML = tags + `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
+      `<div>${escapeHtml(c.text)}</div>` + (c.suggestion ? `<div class="suggest"><b>suggested:</b> ${escapeHtml(c.suggestion)}</div>` : "") + `${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
       `<textarea rows="2" placeholder="reply, typed or spoken"></textarea><div class="actions"><button data-a="reply">reply</button>` +
-      (c.status === "open" ? `<button data-a="resolve">resolve</button>` : `<button data-a="reopen">reopen</button>`) + `<button data-a="goto">go to</button><button data-a="delete">delete</button></div>`;
+      (c.status === "proposed" ? `<button data-a="accept">accept</button><button data-a="dismiss">dismiss</button>`
+        : c.status === "open" ? `<button data-a="resolve">resolve</button>` : `<button data-a="reopen">reopen</button>`) + `<button data-a="goto">go to</button><button data-a="delete">delete</button></div>`;
     const ta = d.querySelector("textarea"); let blob = null;
     d.querySelector(".actions").prepend(micButton(ta, (b) => { blob = b; }));
     d.querySelectorAll("button[data-a]").forEach(b => b.onclick = async () => {
       const act = b.dataset.a;
-      if (act === "goto") { if (MOBILE) document.body.classList.remove("side"); pages[c.page]?.div.scrollIntoView({ behavior: "smooth", block: "start" }); viewer.scrollBy(0, c.y_pt * SCALE - 120); return; }
+      if (act === "goto" && !pages[c.page]) return;
+      if (act === "goto") { if (MOBILE) document.body.classList.remove("side"); const vr = viewer.getBoundingClientRect(), pr = pages[c.page].div.getBoundingClientRect();
+        viewer.scrollTo({ top: viewer.scrollTop + (pr.top - vr.top) + c.y_pt * SCALE - 120, behavior: "smooth" }); return; }
       if (act === "delete" && !confirm("delete comment #" + c.id + "?")) return;
       if (act === "reply") {
         const text = ta.value.trim(); if (!text && !blob) return;
         if (blob) { const r = await postVoice(blob, { reply_to: c.id, author: WHO.reviewer, dictation: text }); if (r && r.warning) alert("paperdesk: " + r.warning); }
         else await fetch(`/api/comments/${c.id}/reply`, { method: "POST", body: JSON.stringify({ author: WHO.reviewer, text }) });
       } else {
-        await fetch(`/api/comments/${c.id}/${act}`, { method: "POST", body: "{}" });
+        await fetch(`/api/comments/${c.id}/${act}`, { method: "POST", body: JSON.stringify({ author: WHO.reviewer }) });
       }
       await refresh();
     });
@@ -290,7 +306,7 @@ async function refresh() {
   const st = await (await fetch("/api/status")).json();
   document.getElementById("paper").textContent = st.paper; WHO = { reviewer: st.reviewer, editor: st.editor }; VOICE = st.voice || null;
   if (st.kind === "docx") document.querySelector("#side .hint").textContent = "Select words on the page, or click a figure or a table, then write. Each comment is anchored to the paragraph of the Word document those words come from, its heading path and the table or image beside it.";
-  statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open` + (st.watched ? "" : " · unwatched");
+  statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open` + (st.n_proposed ? ` · ${st.n_proposed} proposed` : "") + (st.watched ? "" : " · unwatched");
   statusEl.title = st.watched ? `${st.editor} is watching` : `nobody is watching this desk: comments are saved but ${st.editor} will not see them until "desk.py watch" runs`;
   if (st.build.ok === false) console.warn(st.build.log);
   if (pdfMtime !== null && st.pdf_mtime !== pdfMtime && !st.build.running) { pdfMtime = st.pdf_mtime; await loadPdf(); }
@@ -300,6 +316,11 @@ async function refresh() {
   document.getElementById("toggle").textContent = `comments (${st.n_open})`;
 }
 
+const themeBtn = document.getElementById("theme");               // night mode: remembered per browser
+function showTheme() { const dark = document.documentElement.dataset.theme === "dark"; themeBtn.textContent = dark ? "☀" : "☾"; themeBtn.title = dark ? "day mode" : "night mode"; }
+themeBtn.onclick = () => { const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = t; try { localStorage.setItem("paperdesk.theme", t); } catch (e) {} showTheme(); };
+showTheme();
 document.getElementById("rebuild").onclick = async () => { await fetch("/api/rebuild", { method: "POST" }); statusEl.textContent = "building…"; };
 document.getElementById("reload").onclick = loadPdf;
 document.getElementById("toggle").onclick = () => document.body.classList.toggle("side");

@@ -8,12 +8,26 @@
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
     python desk.py transcribe [ID]     the words of the voice notes still without any (or one comment's), once a model is installed
+
+Review agents comment from the source, not the page (LaTeX desks):
+
+    python desk.py add --file sections/theory.tex --quote "words copied verbatim from the file" [--line N]
+                       [--severity error|major|minor|style] [--category C] [--suggest "replacement"] [--author ai:ROLE] "the comment"
+    python desk.py add --jsonl comments.jsonl     the same, one JSON object per line with those keys (and "text")
+    python desk.py list --proposed [--author ai:ROLE]   the agents' comments waiting for triage
+    python desk.py accept ID [ID ...]  a proposed comment becomes open work
+    python desk.py dismiss ID [ID ...] ["why"]   kept as dismissed, so each reviewer's hit rate can be counted
+
+The quote must occur in the file verbatim (whitespace aside); --line picks among several occurrences. A quote that is
+not there is refused, so an agent cannot comment on words the paper does not contain. SyncTeX places the comment on
+the built PDF, where the reviewer sees it beside their own.
 """
 import json
-import os
 import sys
 import time
 from pathlib import Path
+
+import store
 
 try:
     import tomllib
@@ -30,34 +44,68 @@ STORE = CONFIG.parent / "comments.jsonl"
 _CFG = tomllib.loads(CONFIG.read_text()) if CONFIG.exists() else {}
 REVIEWER = _CFG.get("people", {}).get("reviewer", "reviewer")
 EDITOR = _CFG.get("people", {}).get("editor", "editor")
+_PAPER_CFG = _CFG.get("paper", {})
+PAPER = (CONFIG.parent / _PAPER_CFG.get("dir", ".")).resolve()
+PDF = PAPER / (Path(_PAPER_CFG.get("main", "main.tex")).stem + ".pdf")
 
 
 def load():
-    return [json.loads(l) for l in STORE.read_text().splitlines() if l.strip()] if STORE.exists() else []
+    return store.load(STORE)
 
 
-def save(items):
-    tmp = STORE.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in items))
-    os.replace(tmp, STORE)
+def change(ids, fn):
+    """Apply ``fn`` to each comment whose id is in ``ids``, under the record's lock; the ids not found are named."""
+    ids = {int(i) for i in ids}
+    with store.locked(STORE) as items:
+        hit = [c for c in items if c["id"] in ids]
+        for c in hit:
+            fn(c)
+        store.save(STORE, items)
+    missing = ids - {c["id"] for c in hit}
+    if missing:
+        print(f"no comment {', '.join(map(str, sorted(missing)))}", file=sys.stderr)
+    return hit
+
+
+def add(d):
+    """One source-anchored comment into the record: its id and where it landed, or why it was refused."""
+    import anchor
+    try:
+        c = anchor.comment_from_source(PAPER, PDF, d, d.get("author") or "agent")
+    except (LookupError, ValueError) as e:
+        return None, str(e)
+    with store.locked(STORE) as items:
+        c = dict(id=store.next_id(items), **c)
+        items.append(c); store.save(STORE, items)
+    return c, None
+
+
+def _opt(argv, name):
+    if name in argv:
+        i = argv.index(name); v = argv[i + 1]; del argv[i:i + 2]; return v
+    return None
 
 
 def line_of(c):
     a = c.get("anchor") or {}
+    tags = " ".join(x for x in (c.get("author") if c.get("author") != REVIEWER else None, c.get("severity"), c.get("category")) if x)
     where = f"{a.get('file')}:{'¶' if a.get('unit') == 'paragraph' else ''}{a.get('line')}" if a.get("file") and a.get("line") else f"page {c['page']} (unresolved)"
     sec = a.get("section") or ""
     lab = f" [{a['float']} {a.get('label')}]" if a.get("float") else ""
     q = (c.get("quote") or "").strip().replace("\n", " ")
     q = (q[:90] + "…") if len(q) > 90 else q
-    return f"#{c['id']} {c['status']:8s} {where}  {sec}{lab}\n    quote: \"{q}\"\n    {c['text']}"
+    sug = f"\n    suggest: {c['suggestion']}" if c.get("suggestion") else ""
+    return (f"#{c['id']} {c['status']:8s} {where}  {sec}{lab}" + (f"  [{tags}]" if tags else "")
+            + f"\n    quote: \"{q}\"\n    {c['text']}{sug}")
 
 
 def main(argv):
     cmd = argv[0] if argv else "list"
     if cmd == "list":
-        items = load()
-        for c in items:
-            if "--all" in argv or c["status"] == "open":
+        argv = list(argv); who = _opt(argv, "--author")
+        want = None if "--all" in argv else ("proposed" if "--proposed" in argv else "open")
+        for c in load():
+            if (want is None or c["status"] == want) and (who is None or c.get("author") == who):
                 print(line_of(c))
                 for r in c.get("replies", []):
                     print(f"    ↳ {r['author']}: {r['text']}")
@@ -71,17 +119,43 @@ def main(argv):
         for s in a.get("source", []):
             print(f"  {unit}{s['line']:5d} | {s['text']}")
     elif cmd == "reply":
-        items = load()
-        for c in items:
-            if c["id"] == int(argv[1]):
-                c["replies"].append(dict(author=EDITOR, text=" ".join(argv[2:]), created=time.strftime("%Y-%m-%d %H:%M:%S")))
-        save(items); print("replied")
-    elif cmd == "resolve":
-        items = load()
-        for c in items:
-            if c["id"] == int(argv[1]):
-                c["status"] = "resolved"
-        save(items); print("resolved")
+        change([argv[1]], lambda c: c["replies"].append(dict(author=EDITOR, text=" ".join(argv[2:]),
+                                                              created=time.strftime("%Y-%m-%d %H:%M:%S"))))
+        print("replied")
+    elif cmd in ("resolve", "accept", "dismiss"):
+        ids = [a for a in argv[1:] if a.isdigit()]; why = " ".join(a for a in argv[1:] if not a.isdigit())
+        status = {"resolve": "resolved", "accept": "open", "dismiss": "dismissed"}[cmd]
+
+        def set_status(c):
+            c["status"] = status
+            if cmd == "accept":
+                c["accepted_by"] = EDITOR
+            if why:
+                c["replies"].append(dict(author=EDITOR, text=why, created=time.strftime("%Y-%m-%d %H:%M:%S")))
+        hit = change(ids, set_status)
+        print(f"{status}: {' '.join(str(c['id']) for c in hit)}")
+    elif cmd == "add":
+        argv = list(argv[1:]); src = _opt(argv, "--jsonl")
+        if src:
+            rows = [json.loads(l) for l in (sys.stdin if src == "-" else open(src)).read().splitlines() if l.strip()]
+        else:
+            d = {k: _opt(argv, "--" + f) for k, f in (("file", "file"), ("quote", "quote"), ("line", "line"),
+                                                        ("severity", "severity"), ("category", "category"),
+                                                        ("suggestion", "suggest"), ("author", "author"))}
+            d["text"] = " ".join(argv)
+            rows = [{k: v for k, v in d.items() if v is not None}]
+        refused = 0
+        for d in rows:
+            if d.get("line") is not None:
+                d["line"] = int(d["line"])
+            c, err = add(d)
+            if c is None:
+                refused += 1; print(f"REFUSED {d.get('file')}: {err}")
+            else:
+                a = c["anchor"]
+                print(f"#{c['id']} {a['file']}:{a['line']} page {c['page']}" + (f"  ({a['error']})" if a.get("error") else ""))
+        if refused:
+            raise SystemExit(f"{refused} of {len(rows)} refused")
     elif cmd == "transcribe":
         # the words of the voice notes that have none (all of them, or one comment's), once a model is installed
         import voice
@@ -98,13 +172,15 @@ def main(argv):
             target = c if i is None else c["replies"][i]
             text = voice.transcribe(audio / target["audio"], _CFG, models)
             voice.words_into(target, text, st["model"])
-            save(items)
+            store.save(STORE, items)
             print(f"#{c['id']}{'' if i is None else f' reply {i}'}: {target['text']}")
     elif cmd == "watch":
         # a new comment, a new reply by the author, or a voice note whose words landed: one line each
         def state(items):
             out = {}
             for c in items:
+                if (c.get("author") or REVIEWER) != REVIEWER and c.get("accepted_by") != REVIEWER:
+                    continue                                    # an agent's comment is news once the reviewer accepts it
                 out[("c", c["id"])] = c["text"]
                 for i, r in enumerate(c.get("replies", [])):
                     if r.get("author") != EDITOR:
