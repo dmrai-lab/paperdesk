@@ -13,6 +13,7 @@ function fitScale(vp1) {                                    // the page fills th
 }
 
 async function loadPdf() {
+  const keep = readingPosition() || savedPosition();         // a reload (rebuilt PDF, button or browser) returns to the same place
   stage.innerHTML = ""; pages = {}; if (observer) observer.disconnect();
   doc = await pdfjsLib.getDocument({ url: "/pdf?" + Date.now() }).promise;
   const first = await doc.getPage(1); const vp1 = first.getViewport({ scale: 1 });
@@ -28,12 +29,36 @@ async function loadPdf() {
     const page = n === 1 ? first : await doc.getPage(n); pages[n].page = page; pages[n].vp1 = page.getViewport({ scale: 1 });
   }
   layout();
+  if (keep) goToPosition(keep);
   observer = new IntersectionObserver((entries) => {
     for (const en of entries) { const n = parseInt(en.target.dataset.page); if (en.isIntersecting) render(n); else if (Math.abs(pages[n].rendered) > 0 && far(n)) unrender(n); }
   }, { root: viewer, rootMargin: "1200px 0px" });
   for (const n in pages) observer.observe(pages[n].div);
   drawPins();
 }
+
+function readingPosition() {                              // the page at the top of the viewer and how far down it is, in page heights
+  const vr = viewer.getBoundingClientRect();
+  for (let n = 1; n in pages; n++) {
+    const r = pages[n].div.getBoundingClientRect();
+    if (r.bottom > vr.top + 1) return { page: n, frac: (vr.top - r.top) / r.height };
+  }
+  return null;
+}
+
+function goToPosition(pos) {                               // the page count or scale may have changed since: clamp the page, keep the fraction
+  const n = Math.min(Math.max(1, pos.page), doc.numPages);
+  const vr = viewer.getBoundingClientRect(), r = pages[n].div.getBoundingClientRect();
+  viewer.scrollTop += (r.top - vr.top) + pos.frac * r.height;
+}
+
+function savedPosition() { try { return JSON.parse(localStorage.getItem("paperdesk.position")); } catch (e) { return null; } }
+
+let positionTimer = null;
+viewer.addEventListener("scroll", () => {
+  clearTimeout(positionTimer);
+  positionTimer = setTimeout(() => { const pos = readingPosition(); if (pos) try { localStorage.setItem("paperdesk.position", JSON.stringify(pos)); } catch (e) {} }, 300);
+});
 
 function layout() {                                        // every page box at the current scale; pins follow
   for (const n in pages) { const p = pages[n]; p.vp = p.page.getViewport({ scale: SCALE }); p.div.style.width = p.vp.width + "px"; p.div.style.height = p.vp.height + "px";
