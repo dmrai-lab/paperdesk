@@ -296,7 +296,7 @@ function renderList() {
   for (const c of [...comments].sort((a, b) => b.id - a.id)) {
     if (!shown(c)) continue;
     const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status; d.id = "c" + c.id;
-    const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved`;
+    const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved` + (a.stale ? " · the words were rewritten since; pin left where they were" : "");
     const tags = isAgent(c) ? `<div class="tags"><span class="tag who">${escapeHtml(c.author)}</span>` + (c.severity ? `<span class="tag sev-${escapeHtml(c.severity)}">${escapeHtml(c.severity)}</span>` : "")
       + (c.category ? `<span class="tag">${escapeHtml(c.category)}</span>` : "") + (c.status !== "open" ? `<span class="tag">${c.status}</span>` : "") + `</div>` : "";
     d.innerHTML = tags + `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +

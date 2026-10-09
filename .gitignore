@@ -10,3 +10,4 @@ tunnel.url
 __pycache__/
 watch.heartbeat
 comments.lock
+.anchored_mtime

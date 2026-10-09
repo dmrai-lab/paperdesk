@@ -7,6 +7,8 @@
     python desk.py show ID             one comment in full, with the source lines around its anchor
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
+    python desk.py reanchor            every live comment moved to where its words are in the PDF built now (the server
+                                       does this by itself whenever the PDF changes)
     python desk.py transcribe [ID]     the words of the voice notes still without any (or one comment's), once a model is installed
 
 Review agents comment from the source, not the page (LaTeX desks):
@@ -156,6 +158,13 @@ def main(argv):
                 print(f"#{c['id']} {a['file']}:{a['line']} page {c['page']}" + (f"  ({a['error']})" if a.get("error") else ""))
         if refused:
             raise SystemExit(f"{refused} of {len(rows)} refused")
+    elif cmd == "reanchor":                                  # every live comment to where its words are in the PDF built now
+        import anchor
+        with store.locked(STORE) as items:
+            moved, stale = anchor.reanchor(PAPER, PDF, items)
+            store.save(STORE, items)
+        (CONFIG.parent / ".anchored_mtime").write_text(str(PDF.stat().st_mtime))
+        print(f"{moved} moved, {stale} newly stale (their words were rewritten; marked on the page)")
     elif cmd == "transcribe":
         # the words of the voice notes that have none (all of them, or one comment's), once a model is installed
         import voice

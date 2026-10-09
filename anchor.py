@@ -150,3 +150,144 @@ def comment_from_source(paper: Path, pdf: Path, d, author):
     return dict(created=time.strftime("%Y-%m-%d %H:%M:%S"), status="proposed", author=d.get("author") or author,
                 severity=sev, category=d.get("category"), text=d["text"].strip(), quote=d["quote"].strip(),
                 suggestion=d.get("suggestion"), page=page, x_pt=x, y_pt=y, rect=rect, anchor=anchor, replies=[])
+
+
+# ----------------------------------------------------------------- re-anchoring after the source changed
+def pdf_words(pdf: Path):
+    """Every word of the built PDF with its box, in points from the page's top-left (``pdftotext -bbox``):
+    ``{page: [(x0, y0, x1, y1, word), ...]}`` in reading order."""
+    import html
+    out = subprocess.run(["pdftotext", "-bbox", str(pdf), "-"], capture_output=True, text=True, timeout=120).stdout
+    # read line by line, not as XML: a PDF's text can carry control characters that make the document ill-formed
+    pages, n = {}, 0
+    word = re.compile(r'<word xMin="([-\d.]+)" yMin="([-\d.]+)" xMax="([-\d.]+)" yMax="([-\d.]+)">(.*?)</word>')
+    for line in out.splitlines():
+        if "<page " in line:
+            n += 1; pages[n] = []
+        m = word.search(line)
+        if m and n:
+            pages[n].append((float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4)), html.unescape(m.group(5))))
+    return pages
+
+
+def _letters(s):
+    """Letters only, lower case: what a selected quote and the PDF's text have in common whatever the line numbers,
+    hyphenation, ligature splits and spacing that a selection drags along."""
+    return "".join(ch for ch in s.lower() if ch.isalpha())
+
+
+class _PageText:
+    """A page's words as one letters-only string, each letter mapped back to its word."""
+    def __init__(self, words):
+        self.words = words; chars, owner = [], []
+        for k, w in enumerate(words):
+            for ch in _letters(w[4]):
+                chars.append(ch); owner.append(k)
+        self.text = "".join(chars); self.owner = owner
+
+    def hits(self, probe):
+        i = self.text.find(probe)
+        while i >= 0:
+            yield self.owner[i], self.owner[i + len(probe) - 1]
+            i = self.text.find(probe, i + 1)
+
+
+def _place(words, k0, k1):
+    """``(x_pt, y_pt, rect)`` of the matched words ``k0..k1``: the pin at the first word's left, mid-height, the mark
+    over the matched words of the first line."""
+    w0 = words[k0]
+    line = [w for w in words[k0:k1 + 1] if abs(w[1] - w0[1]) < 0.6 * (w0[3] - w0[1]) + 1]
+    x0 = min(w[0] for w in line); x1 = max(w[2] for w in line); y0 = min(w[1] for w in line); y1 = max(w[3] for w in line)
+    return w0[0], (w0[1] + w0[3]) / 2, dict(x=x0, y=y0, w=x1 - x0, h=y1 - y0)
+
+
+def _source_line_now(paper: Path, a):
+    """The line the comment's old source line sits on now: its text (``anchor.source``) found in the file, of
+    several the nearest the old line number; None when the line itself was rewritten."""
+    old = next((s["text"] for s in a.get("source") or [] if s.get("line") == a.get("line")), None)
+    p = paper / str(a.get("file") or "")
+    if not old or not old.strip() or not p.is_file():
+        return None
+    lines = p.read_text().splitlines()
+    cand = [i + 1 for i, l in enumerate(lines) if l.strip() == old.strip()]
+    return min(cand, key=lambda n: abs(n - int(a["line"]))) if cand else None
+
+
+def reanchor(paper: Path, pdf: Path, comments, words=None):
+    """Move every live comment (open or proposed) to where its words are in the PDF built now, and refresh its
+    source anchor. Two routes, the source one authoritative where it answers:
+
+    * the source: a quote that occurs verbatim in the anchored file (an agent's, copied from the source) gives its
+      line directly, nearest the old line; without a quote, the old line's own text found again;
+    * the PDF: the quote letters-only in the new PDF (a reviewer's, copied from the page with its line numbers and
+      hyphens), of several hits the one nearest where the source route or the old position puts it; when the whole
+      quote is gone, its first or last 24 letters within two pages of there.
+
+    The pin goes where the PDF route finds the words, else where the source line is typeset; the anchor is the
+    source route's line, else what SyncTeX says of the new point. A comment neither route finds keeps its place and
+    is marked ``anchor["stale"]``: the words it commented on were rewritten. Returns ``(moved, stale)``."""
+    words = words or pdf_words(pdf)
+    pages = {n: _PageText(w) for n, w in words.items()}
+    moved = stale = 0
+
+    def nearest(probe, ref_page, ref_y, within=None):
+        best = None
+        for n, pt in pages.items():
+            if within is not None and abs(n - ref_page) > within:
+                continue
+            for k0, k1 in pt.hits(probe):
+                d = abs(n - ref_page) * 2000 + abs(pt.words[k0][1] - ref_y)
+                if best is None or d < best[0]:
+                    best = (d, n, k0, k1)
+        return best
+
+    for c in comments:
+        if c.get("status") not in ("open", "proposed") or c.get("page") is None:
+            continue
+        a = dict(c.get("anchor") or {})
+        old = (int(c["page"]), float(c.get("x_pt") or 0), float(c.get("y_pt") or 0))
+        src_line = None
+        if a.get("file") and a.get("line"):
+            if c.get("quote"):
+                try:
+                    src_line = find_quote(paper, a["file"], c["quote"], int(a["line"]))
+                except LookupError:
+                    src_line = None
+            if src_line is None and not c.get("quote"):
+                src_line = _source_line_now(paper, a)
+        view = synctex_view(paper, pdf, a["file"], src_line) if src_line else None
+        ref_page, ref_y = (view[0], view[2]) if view else (old[0], old[2])
+        target = None
+        probe = _letters(c.get("quote") or "")
+        if len(probe) >= 3:
+            best = nearest(probe, ref_page, ref_y)
+            if best is None and len(probe) >= 40:
+                for part in (probe[:24], probe[-24:]):
+                    best = nearest(part, ref_page, ref_y, within=2)
+                    if best:
+                        break
+            if best:
+                _, n, k0, k1 = best
+                x, y, rect = _place(words[n], k0, k1)
+                target = (n, x, y, rect)
+        if target is None and view:
+            target = (view[0], view[1], view[2], view[3])
+        if target is None:
+            if not a.get("stale"):
+                a["stale"] = True; stale += 1
+            c["anchor"] = a
+            continue
+        n, x, y, rect = target
+        moved += (n != old[0]) or abs(y - old[2]) > 0.5 or abs(x - old[1]) > 0.5
+        c["page"], c["x_pt"], c["y_pt"] = n, x, y
+        if rect is not None:
+            c["rect"] = rect
+        a.pop("stale", None)
+        if src_line:
+            a.update(file=a["file"], line=src_line, **context_of(paper, a["file"], src_line))
+        else:
+            f, ln, err = synctex_edit(paper, pdf, n, x + 1, y)
+            if f is not None:
+                a.update(file=f, line=ln, **context_of(paper, f, ln))
+        c["anchor"] = a
+    return moved, stale

@@ -223,6 +223,42 @@ def transcribe_later(cid, reply_index, path):
 
 
 # ----------------------------------------------------------------- the build
+_ANCHORED = {"mtime": None, "running": False}
+_ANCHORED_FILE = DESK / ".anchored_mtime"
+
+
+def reanchor_if_rebuilt():
+    """Once per new PDF, in the background: every live comment moved to where its words are now and its source
+    anchor refreshed (:func:`anchor.reanchor`), under the record's lock. The PDF's mtime it last ran for is kept
+    beside the record, so a restart does not redo it and a build by any route (the button, latexmk by hand, an
+    agent) triggers it."""
+    if KIND != "latex" or not PDF.exists():
+        return
+    mt = PDF.stat().st_mtime
+    if _ANCHORED["mtime"] is None and _ANCHORED_FILE.exists():
+        try:
+            _ANCHORED["mtime"] = float(_ANCHORED_FILE.read_text().strip())
+        except ValueError:
+            pass
+    with LOCK:
+        if _ANCHORED["running"] or _ANCHORED["mtime"] == mt or BUILD["running"]:
+            return
+        _ANCHORED["running"] = True
+    def run():
+        try:
+            words = _anchor.pdf_words(PDF)
+            with _store.locked(STORE) as items:
+                moved, stale = _anchor.reanchor(PAPER, PDF, items, words)
+                save_comments(items)
+            print(f"re-anchored to the PDF of {time.strftime('%H:%M:%S', time.localtime(mt))}: {moved} moved, {stale} newly stale", flush=True)
+            _ANCHORED["mtime"] = mt; _ANCHORED_FILE.write_text(str(mt))
+        except Exception as e:                               # noqa: BLE001  (never take the desk down over a pin)
+            print(f"re-anchoring failed: {e}", flush=True)
+        finally:
+            _ANCHORED["running"] = False
+    threading.Thread(target=run, daemon=True).start()
+
+
 def watched():
     """Whether a ``desk.py watch`` is running on this desk: its heartbeat file touched within the last ten seconds."""
     hb = DESK / "watch.heartbeat"
@@ -292,6 +328,7 @@ class Handler(BaseHTTPRequestHandler):
             save = {"Content-Disposition": f'attachment; filename="{PDF.name}"'} if "download" in u.query else None
             return self._send(200, PDF.read_bytes(), "application/pdf", save)
         if u.path == "/api/comments":
+            reanchor_if_rebuilt()
             return self._send(200, load_comments())
         if u.path.startswith("/audio/"):
             f = AUDIO / Path(u.path).name
