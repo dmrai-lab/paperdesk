@@ -213,6 +213,53 @@ def _source_line_now(paper: Path, a):
     return min(cand, key=lambda n: abs(n - int(a["line"]))) if cand else None
 
 
+def _detex(q):
+    """A source quote as the page shows it, near enough to search: math, references and citations dropped (the page
+    prints a number or a symbol there), a macro's argument kept, the macros themselves and their braces removed."""
+    q = re.sub(r"\$[^$]*\$", " ", q)
+    q = re.sub(r"\\(?:ref|eqref|cref|Cref|cite[pt]?|citealp|label|url|href)\*?(?:\[[^\]]*\])?\{[^}]*\}", " ", q)
+    for _ in range(3):
+        q = re.sub(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?\{([^{}]*)\}", r"\1", q)
+    q = re.sub(r"\\[a-zA-Z]+\*?", " ", q)
+    return q.replace("~", " ").replace("{", " ").replace("}", " ")
+
+
+def _fuzzy_line(paper: Path, file, quote, near, reach=200, accept=0.72):
+    """The line a source quote starts on when its words were edited since: of the stretches of the file aligned on
+    the quote's longest exact run (difflib), within ``reach`` lines of ``near``, the one most like the quote, if its
+    ratio reaches ``accept``; None otherwise. The quote may start anywhere in a line."""
+    import difflib
+    p = paper / file
+    if not p.is_file():
+        return None
+    lines = p.read_text().splitlines()
+    q = " ".join(quote.split())
+    flat, line_of = [], []                                   # the file's words single-spaced, each char's line
+    lo, hi = max(0, int(near) - reach), min(len(lines), int(near) + reach)
+    for n in range(lo, hi):
+        t = " ".join(lines[n].split())
+        if not t:
+            continue
+        if flat:
+            flat.append(" "); line_of.append(n + 1)
+        flat.append(t); line_of.extend([n + 1] * len(t))
+    text = "".join(flat)
+    if not text:
+        return None
+    best = (0.0, None)
+    step = max(8, len(q) // 3)
+    for k in range(0, max(1, len(q) - 12), step):            # anchor on each third of the quote in turn
+        piece = q[k:k + max(12, len(q) // 3)]
+        at = text.find(piece)
+        while at >= 0:
+            start = max(0, at - k)
+            ratio = difflib.SequenceMatcher(None, q, text[start:start + len(q) + 10], autojunk=False).ratio()
+            if ratio > best[0]:
+                best = (ratio, line_of[min(start, len(line_of) - 1)])
+            at = text.find(piece, at + 1)
+    return best[1] if best[0] >= accept else None
+
+
 def reanchor(paper: Path, pdf: Path, comments, words=None):
     """Move every live comment (open or proposed) to where its words are in the PDF built now, and refresh its
     source anchor. Two routes, the source one authoritative where it answers:
@@ -252,20 +299,27 @@ def reanchor(paper: Path, pdf: Path, comments, words=None):
                 try:
                     src_line = find_quote(paper, a["file"], c["quote"], int(a["line"]))
                 except LookupError:
-                    src_line = None
+                    src_line = _fuzzy_line(paper, a["file"], c["quote"], int(a["line"])) if len(c["quote"]) >= 30 else None
             if src_line is None and not c.get("quote"):
                 src_line = _source_line_now(paper, a)
         view = synctex_view(paper, pdf, a["file"], src_line) if src_line else None
         ref_page, ref_y = (view[0], view[2]) if view else (old[0], old[2])
         target = None
-        probe = _letters(c.get("quote") or "")
+        q = c.get("quote") or ""
+        probe = _letters(q)
         if len(probe) >= 3:
             best = nearest(probe, ref_page, ref_y)
-            if best is None and len(probe) >= 40:
-                for part in (probe[:24], probe[-24:]):
-                    best = nearest(part, ref_page, ref_y, within=2)
-                    if best:
-                        break
+            # a source quote: as the page prints it, then its longest stretch of plain words
+            chunks = [_letters(x) for x in re.split(r"\$[^$]*\$|\\(?:ref|eqref|cite[pt]?|citealp)\{[^}]*\}", q)]
+            for cand in ([_letters(_detex(q))] + sorted(chunks, key=len, reverse=True)[:1]) if best is None and "\\" in q or "$" in q else []:
+                if best is None and len(cand) >= 12:
+                    best = nearest(cand, ref_page, ref_y, within=None if view else 2)
+            if best is None and len(probe) >= 40:              # an edited sentence: its opening words, else its source line
+                for part in (probe[:24], _letters(_detex(q))[:24]):
+                    if best is None and len(part) >= 16:
+                        best = nearest(part, ref_page, ref_y, within=2)
+                if best is None and not view and len(probe[-24:]) >= 16:
+                    best = nearest(probe[-24:], ref_page, ref_y, within=2)
             if best:
                 _, n, k0, k1 = best
                 x, y, rect = _place(words[n], k0, k1)
