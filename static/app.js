@@ -15,6 +15,7 @@ function fitScale(vp1) {                                    // the page fills th
 async function loadPdf() {
   const keep = readingPosition() || savedPosition();         // a reload (rebuilt PDF, button or browser) returns to the same place
   stage.innerHTML = ""; pages = {}; if (observer) observer.disconnect();
+  textIndex = {}; finds = []; findAt = -1;                 // a new document: the search index and its matches start over
   doc = await pdfjsLib.getDocument({ url: "/pdf?" + Date.now() }).promise;
   const first = await doc.getPage(1); const vp1 = first.getViewport({ scale: 1 });
   SCALE = fitScale(vp1);
@@ -63,7 +64,7 @@ viewer.addEventListener("scroll", () => {
 function layout() {                                        // every page box at the current scale; pins follow
   for (const n in pages) { const p = pages[n]; p.vp = p.page.getViewport({ scale: SCALE }); p.div.style.width = p.vp.width + "px"; p.div.style.height = p.vp.height + "px";
     if (p.rendered && p.rendered !== SCALE) unrender(n); }
-  drawPins();
+  drawPins(); drawFinds();
 }
 
 function far(n) { const r = pages[n].div.getBoundingClientRect(); return r.bottom < -3000 || r.top > window.innerHeight + 3000; }
@@ -120,6 +121,7 @@ async function render(n) {
   p.div.prepend(links); p.div.prepend(tl); p.div.prepend(canvas); p.div.classList.remove("blank");
   for (const s of tl.children) { const w = s.getBoundingClientRect().width / currentCssScale(); if (w > 0 && s.dataset.w) s.style.transform = `scaleX(${(parseFloat(s.dataset.w) * SCALE) / w})`; }
   p.tl = tl; p.rendered = SCALE; p.rendering = false;
+  if (finds.some(f => f.n === n)) drawFinds();              // a page with matches just rendered: its highlights move onto the glyphs
 }
 
 let cssScale = 1;                                          // a transient CSS zoom during a pinch, before pages re-render
@@ -350,5 +352,89 @@ document.getElementById("rebuild").onclick = async () => { await fetch("/api/reb
 document.getElementById("reload").onclick = loadPdf;
 document.getElementById("toggle").onclick = () => document.body.classList.toggle("side");
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopup(); });
+
+// ---- find in the PDF: Ctrl/Cmd+F focuses the box, Enter and Shift+Enter walk the matches, Escape clears them.
+// Each page's text is read once (pdf.js text items joined in reading order, whitespace folded) and searched case-
+// insensitively; a match is drawn as a highlight on the fraction of each item it covers, on every page whether or not
+// that page is rendered, and re-laid out with the pages when the scale changes.
+let textIndex = {}, finds = [], findAt = -1, findQuery = "";
+const findEl = document.getElementById("find"), findCount = document.getElementById("findcount");
+const fold = (s) => s.replace(/\s+/g, " ");
+
+async function pageText(n) {                              // {text, lower, spans: [{start, end, item}]} for page n, cached
+  if (textIndex[n]) return textIndex[n];
+  const tc = await pages[n].page.getTextContent(); let text = ""; const spans = [];
+  for (const item of tc.items) {
+    if (!item.str) { if (item.hasEOL && !text.endsWith(" ")) text += " "; continue; }
+    const start = text.length; text += fold(item.str); spans.push({ start, end: text.length, item });
+    if (item.hasEOL && !text.endsWith(" ")) text += " ";
+  }
+  return (textIndex[n] = { text, lower: text.toLowerCase(), spans });
+}
+
+function hitRects(n, start, end) {                        // the page-relative rectangles of text[start:end] on page n
+  const { spans } = textIndex[n]; const p = pages[n]; const vp = p.vp; const out = [];
+  const tl = p.tl && p.rendered === SCALE ? p.tl.children : null;   // a rendered page: the text layer's own glyph boxes
+  const pr = tl ? p.div.getBoundingClientRect() : null, cs = currentCssScale();
+  spans.forEach((sp, k) => {
+    const a = Math.max(start, sp.start), b = Math.min(end, sp.end); if (b <= a) return;
+    if (tl && tl[k] && tl[k].firstChild) {
+      const node = tl[k].firstChild, L = node.length; const rg = document.createRange();
+      rg.setStart(node, Math.min(L, a - sp.start)); rg.setEnd(node, Math.min(L, b - sp.start));
+      for (const r of rg.getClientRects()) out.push({ x: (r.left - pr.left) / cs, y: (r.top - pr.top) / cs, w: r.width / cs, h: r.height / cs });
+      return;
+    }
+    const it = sp.item, len = Math.max(1, sp.end - sp.start); const f0 = (a - sp.start) / len, f1 = (b - sp.start) / len;
+    const t = it.transform; const x = t[4] + it.width * f0, w = it.width * (f1 - f0), y = t[5], h = it.height || Math.hypot(t[2], t[3]);
+    const r = vp.convertToViewportRectangle([x, y - 0.2 * h, x + w, y + h]);
+    out.push({ x: Math.min(r[0], r[2]), y: Math.min(r[1], r[3]), w: Math.abs(r[2] - r[0]), h: Math.abs(r[3] - r[1]) });
+  });
+  return out;
+}
+
+async function runFind(q) {
+  finds = []; findAt = -1; findQuery = q = fold(q).trim().toLowerCase();
+  if (q && doc) {
+    for (let n = 1; n <= doc.numPages; n++) {
+      const { lower } = await pageText(n); let i = lower.indexOf(q);
+      while (i >= 0) { finds.push({ n, start: i, end: i + q.length }); i = lower.indexOf(q, i + 1); }
+    }
+  }
+  drawFinds(); if (finds.length) goToFind(0); else findCount.textContent = q ? "0" : "";
+}
+
+function drawFinds() {
+  document.querySelectorAll(".findLayer").forEach(x => x.remove());
+  if (!finds.length) return;
+  const layers = {};
+  finds.forEach((f, k) => {
+    if (!layers[f.n]) { layers[f.n] = document.createElement("div"); layers[f.n].className = "findLayer"; pages[f.n].div.appendChild(layers[f.n]); }
+    for (const r of hitRects(f.n, f.start, f.end)) {
+      const d = document.createElement("div"); d.className = "hit" + (k === findAt ? " current" : "");
+      d.style.left = r.x + "px"; d.style.top = r.y + "px"; d.style.width = r.w + "px"; d.style.height = r.h + "px";
+      layers[f.n].appendChild(d);
+    }
+  });
+}
+
+function goToFind(k) {
+  if (!finds.length) return; findAt = ((k % finds.length) + finds.length) % finds.length;
+  drawFinds(); findCount.textContent = `${findAt + 1} of ${finds.length}`;
+  const f = finds[findAt]; const r = hitRects(f.n, f.start, f.end)[0]; if (!r) return;
+  const vr = viewer.getBoundingClientRect(), pr = pages[f.n].div.getBoundingClientRect();
+  viewer.scrollTo({ top: viewer.scrollTop + (pr.top - vr.top) + r.y - vr.height / 3, behavior: "smooth" });
+}
+
+let findTimer = null;
+findEl.addEventListener("input", () => { clearTimeout(findTimer); findTimer = setTimeout(() => runFind(findEl.value), 250); });
+findEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); clearTimeout(findTimer); if (fold(findEl.value).trim().toLowerCase() !== findQuery) runFind(findEl.value); else goToFind(findAt + (e.shiftKey ? -1 : 1)); }
+  if (e.key === "Escape") { findEl.value = ""; runFind(""); findEl.blur(); }
+  e.stopPropagation();
+});
+document.getElementById("findnext").onclick = () => goToFind(findAt + 1);
+document.getElementById("findprev").onclick = () => goToFind(findAt - 1);
+document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && !e.target.closest("textarea, input")) { e.preventDefault(); findEl.focus(); findEl.select(); } });
+
 window.__desk = { get pages() { return pages; }, get comments() { return comments; }, get scale() { return SCALE; }, openPopup, refresh, toPt, setScale };
 await loadPdf(); await refresh(); setInterval(refresh, 4000);
