@@ -2,7 +2,10 @@
 # your document. Paths are relative to this file; comments, voice notes and auth.json live beside it.
 [paper]
 dir = "../my-paper"                 # the folder with the sources
-main = "main.tex"                   # the root file; the PDF is <main>.pdf beside it
+main = "main.tex"
+# or several documents as tabs, built in order; {doc} in build stands for each file:
+# docs = [{file = "main.tex", title = "paper"}, {file = "supplement.tex", title = "supplement"}]
+# build = "latexmk -pdf -synctex=1 -interaction=nonstopmode -halt-on-error {doc}"                   # the root file; the PDF is <main>.pdf beside it
 build = "latexmk -pdf -synctex=1 -interaction=nonstopmode -halt-on-error main.tex"   # what the rebuild button runs
 # A Word document instead: the anchor is then the paragraph, resolved through the PDF's text.
 # main = "report.docx"

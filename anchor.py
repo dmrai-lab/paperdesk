@@ -135,21 +135,35 @@ def from_source(paper: Path, pdf: Path, file, quote, line=None):
 SEVERITIES = ("error", "major", "minor", "style")
 
 
-def comment_from_source(paper: Path, pdf: Path, d, author):
+def comment_from_source(paper: Path, pdf, d, author):
     """A comment made from the source, not the page (a review agent's): ``d`` holds ``file``, ``quote`` (the source
     words verbatim), ``text`` and optionally ``line`` (which occurrence), ``severity``, ``category``, ``suggestion``
     and ``author``. It is ``proposed``, not ``open``, until accepted. Raises ``LookupError`` or ``ValueError`` when
-    it cannot be anchored or is malformed: an agent's comment that names no real words is refused, not kept."""
+    it cannot be anchored or is malformed: an agent's comment that names no real words is refused, not kept.
+
+    ``pdf`` is the one document's PDF, or the desk's documents as ``[(name, pdf), ...]`` in tab order: the first
+    whose PDF typeset the quoted line is the one the comment lands on, and the record says so in ``doc``."""
     for k in ("file", "quote", "text"):
         if not str(d.get(k) or "").strip():
             raise ValueError(f"a source comment needs '{k}'")
     sev = d.get("severity")
     if sev is not None and sev not in SEVERITIES:
         raise ValueError(f"severity must be one of {', '.join(SEVERITIES)}, not '{sev}'")
-    anchor, page, x, y, rect = from_source(paper, pdf, d["file"], d["quote"], d.get("line"))
-    return dict(created=time.strftime("%Y-%m-%d %H:%M:%S"), status="proposed", author=d.get("author") or author,
-                severity=sev, category=d.get("category"), text=d["text"].strip(), quote=d["quote"].strip(),
-                suggestion=d.get("suggestion"), page=page, x_pt=x, y_pt=y, rect=rect, anchor=anchor, replies=[])
+    docs = pdf if isinstance(pdf, (list, tuple)) else [(None, pdf)]
+    found = None
+    for name, one in docs:
+        anchor, page, x, y, rect = from_source(paper, one, d["file"], d["quote"], d.get("line"))
+        if found is None or page is not None:
+            found = (name, anchor, page, x, y, rect)
+        if page is not None:
+            break
+    name, anchor, page, x, y, rect = found
+    c = dict(created=time.strftime("%Y-%m-%d %H:%M:%S"), status="proposed", author=d.get("author") or author,
+             severity=sev, category=d.get("category"), text=d["text"].strip(), quote=d["quote"].strip(),
+             suggestion=d.get("suggestion"), page=page, x_pt=x, y_pt=y, rect=rect, anchor=anchor, replies=[])
+    if name is not None:
+        c["doc"] = name
+    return c
 
 
 # ----------------------------------------------------------------- re-anchoring after the source changed

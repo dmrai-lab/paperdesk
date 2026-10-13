@@ -1,22 +1,28 @@
 // paperdesk client: the PDF in pdf.js, rendered page by page as it scrolls into view, zoomed by buttons or a pinch;
-// a comment from any selection or tap, typed or spoken; the thread beside it.
+// a comment from any selection or tap, typed or spoken; the thread beside it. A desk with several documents (a paper
+// and its supplement) shows one at a time under a tab bar: pins belong to the document they were made on, the list
+// names each comment's document and "go to" switches to it, and a reference into the other document (a remote link
+// in the PDF, xr-hyper's) switches the tab and scrolls to its target.
 const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs");
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
 const viewer = document.getElementById("viewer"), stage = document.getElementById("stage"), list = document.getElementById("list"), statusEl = document.getElementById("status");
 const fab = document.getElementById("fab");
 const MOBILE = matchMedia("(max-width: 820px)").matches;
 let SCALE = 1.35, doc = null, pages = {}, comments = [], pdfMtime = null, popup = null, pending = null, observer = null, WHO = { reviewer: "reviewer", editor: "editor" };
+let DOCS = [], DOC = null;                                 // the desk's documents (from /api/status) and the one on show
+const docOf = (c) => c.doc || (DOCS[0] && DOCS[0].name);  // a comment's document; a record from before desks had several is the first's
+const docMtime = (name) => { const d = DOCS.find(x => x.name === name); return d ? d.pdf_mtime : null; };
 
 function fitScale(vp1) {                                    // the page fills the viewer's width, never wider than 1.35x
   const avail = viewer.clientWidth - (MOBILE ? 8 : 40);
   return Math.min(1.35, Math.max(0.4, avail / vp1.width));
 }
 
-async function loadPdf() {
-  const keep = readingPosition() || savedPosition();         // a reload (rebuilt PDF, button or browser) returns to the same place
+async function loadPdf(keep) {
+  if (keep === undefined) keep = readingPosition() || savedPosition();   // a reload (rebuilt PDF, button or browser) returns to the same place
   stage.innerHTML = ""; pages = {}; if (observer) observer.disconnect();
   textIndex = {}; finds = []; findAt = -1;                 // a new document: the search index and its matches start over
-  doc = await pdfjsLib.getDocument({ url: "/pdf?" + Date.now() }).promise;
+  doc = await pdfjsLib.getDocument({ url: "/pdf?doc=" + encodeURIComponent(DOC || "") + "&" + Date.now() }).promise;
   const first = await doc.getPage(1); const vp1 = first.getViewport({ scale: 1 });
   SCALE = fitScale(vp1);
   for (let n = 1; n <= doc.numPages; n++) {
@@ -53,13 +59,33 @@ function goToPosition(pos) {                               // the page count or 
   viewer.scrollTop += (r.top - vr.top) + pos.frac * r.height;
 }
 
-function savedPosition() { try { return JSON.parse(localStorage.getItem("paperdesk.position")); } catch (e) { return null; } }
+const positionKey = () => "paperdesk.position" + (DOC && DOCS.length > 1 ? "." + DOC : "");   // one reading position per document
+function savedPosition() { try { return JSON.parse(localStorage.getItem(positionKey())); } catch (e) { return null; } }
+function savePosition() { const pos = readingPosition(); if (pos) try { localStorage.setItem(positionKey(), JSON.stringify(pos)); } catch (e) {} }
 
 let positionTimer = null;
-viewer.addEventListener("scroll", () => {
-  clearTimeout(positionTimer);
-  positionTimer = setTimeout(() => { const pos = readingPosition(); if (pos) try { localStorage.setItem("paperdesk.position", JSON.stringify(pos)); } catch (e) {} }, 300);
-});
+viewer.addEventListener("scroll", () => { clearTimeout(positionTimer); positionTimer = setTimeout(savePosition, 300); });
+
+async function switchDoc(name) {                           // another tab: the current position kept, the other document's restored
+  if (name === DOC || !DOCS.some(d => d.name === name)) return;
+  closePopup(); savePosition(); DOC = name;
+  try { localStorage.setItem("paperdesk.doc", DOC); } catch (e) {}
+  pdfMtime = docMtime(DOC); renderTabs();
+  await loadPdf(savedPosition()); renderList();
+}
+
+function renderTabs() {
+  const tabs = document.getElementById("tabs"); tabs.innerHTML = "";
+  document.getElementById("download").href = "/pdf?doc=" + encodeURIComponent(DOC || "") + "&download";
+  if (DOCS.length < 2) return;
+  for (const d of DOCS) {
+    const b = document.createElement("button"); b.className = "tab" + (d.name === DOC ? " active" : ""); b.title = d.file;
+    const n = comments.filter(c => docOf(c) === d.name && c.status === "open").length;
+    b.innerHTML = escapeHtml(d.title || d.name) + (n ? `<span class="n">${n}</span>` : "");
+    b.onclick = () => switchDoc(d.name);
+    tabs.appendChild(b);
+  }
+}
 
 function layout() {                                        // every page box at the current scale; pins follow
   for (const n in pages) { const p = pages[n]; p.vp = p.page.getViewport({ scale: SCALE }); p.div.style.width = p.vp.width + "px"; p.div.style.height = p.vp.height + "px";
@@ -75,15 +101,31 @@ async function linkLayer(page, vp) {                        // one <a> per link 
   const layer = document.createElement("div"); layer.className = "linkLayer";
   let anns = []; try { anns = await page.getAnnotations(); } catch (e) { return layer; }
   for (const a of anns) {
-    if (a.subtype !== "Link" || (!a.url && !a.dest)) continue;
+    if (a.subtype !== "Link" || (!a.url && !a.unsafeUrl && !a.dest)) continue;
     const r = vp.convertToViewportRectangle(a.rect); const x = Math.min(r[0], r[2]), y = Math.min(r[1], r[3]);
     const el = document.createElement("a"); el.className = "plink";
     el.style.left = x + "px"; el.style.top = y + "px"; el.style.width = Math.abs(r[2] - r[0]) + "px"; el.style.height = Math.abs(r[3] - r[1]) + "px";
-    if (a.url) { el.href = a.url; el.target = "_blank"; el.rel = "noopener"; el.title = a.url; }
-    else { el.href = "#"; el.title = "go to " + (typeof a.dest === "string" ? a.dest : "reference"); el.onclick = async (ev) => { ev.preventDefault(); await goToDest(a.dest); }; }
+    const remote = remoteLink(a);
+    if (remote) { el.href = "#"; el.title = `go to ${remote.doc} (${remote.dest || "start"})`; el.onclick = async (ev) => { ev.preventDefault(); await goToRemote(remote.doc, remote.dest); }; }
+    else if (a.url) { el.href = a.url; el.target = "_blank"; el.rel = "noopener"; el.title = a.url; }
+    else if (a.dest) { el.href = "#"; el.title = "go to " + (typeof a.dest === "string" ? a.dest : "reference"); el.onclick = async (ev) => { ev.preventDefault(); await goToDest(a.dest); }; }
+    else continue;
     layer.appendChild(el);
   }
   return layer;
+}
+
+function remoteLink(a) {                                   // a link into another document of this desk: "supplement.pdf#dest" (pdf.js leaves a GoToR as unsafeUrl)
+  const raw = a.unsafeUrl || a.url || ""; const m = raw.match(/^(?:\.\/)?([^#/?:]+)\.pdf(?:#(.*))?$/);
+  if (!m || !DOCS.some(d => d.name === m[1])) return null;
+  let dest = m[2] ? decodeURIComponent(m[2]) : null;
+  if (dest && dest.startsWith("[")) { try { dest = JSON.parse(dest); } catch (e) { dest = null; } }
+  return { doc: m[1], dest };
+}
+
+async function goToRemote(name, dest) {                    // the other tab, then its destination
+  if (DOC !== name) await switchDoc(name);
+  if (dest) await goToDest(dest);
 }
 
 async function goToDest(dest) {                             // an internal reference: scroll to its page and, when given, its height
@@ -221,7 +263,7 @@ async function postVoice(blob, params) {
 
 async function openPopup(n, at, quote, rect) {
   closePopup(); fab.style.display = "none";
-  const anchor = await (await fetch("/api/resolve", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote }) })).json();
+  const anchor = await (await fetch("/api/resolve", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, doc: DOC }) })).json();
   popup = document.createElement("div"); popup.id = "popup";
   const pw = Math.min(320, window.innerWidth * 0.9);
   popup.style.left = Math.max(4, Math.min(at.xv + 12, pages[n].vp.width - pw - 4)) + "px"; popup.style.top = (at.yv + 12) + "px";
@@ -236,8 +278,8 @@ async function openPopup(n, at, quote, rect) {
   row.append(mic, cancel, save);
   save.onclick = async () => {
     const text = ta.value.trim(); if (!text && !blob) return;
-    if (blob) { const r = await postVoice(blob, { page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect: rect ? JSON.stringify(rect) : "", dictation: text }); if (r && r.warning) alert("paperdesk: " + r.warning); }
-    else await api("/api/comments", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect, text }) });
+    if (blob) { const r = await postVoice(blob, { page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect: rect ? JSON.stringify(rect) : "", dictation: text, doc: DOC || "" }); if (r && r.warning) alert("paperdesk: " + r.warning); }
+    else await api("/api/comments", { method: "POST", body: JSON.stringify({ page: n, x_pt: at.x_pt, y_pt: at.y_pt, quote, rect, text, doc: DOC || undefined }) });
     closePopup(); window.getSelection().removeAllRanges(); await refresh();
   };
   if (!MOBILE) ta.focus();
@@ -274,7 +316,7 @@ function drawPins() {
   for (const n in pages) { pages[n].div.querySelectorAll(".pin, .mark").forEach(x => x.remove()); }
   const fan = {};                                          // agents' pins on one line sit side by side in the right margin
   for (const c of comments) {
-    const p = pages[c.page]; if (!p || !shown(c)) continue;
+    const p = pages[c.page]; if (!p || !shown(c) || docOf(c) !== DOC) continue;   // pins belong to the document on show
     let px = c.x_pt;
     if (isAgent(c) && c.rect) { const k = c.page + ":" + Math.round(c.y_pt); fan[k] = (fan[k] || 0) + 1; px = c.rect.x + c.rect.w + 4 + 22 * fan[k]; }
     if (c.rect) { const m = document.createElement("div"); m.className = "mark" + (isAgent(c) ? " agent" : "");
@@ -297,8 +339,9 @@ function renderList() {
     if (!shown(c)) continue;
     const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status; d.id = "c" + c.id;
     const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved` + (a.stale ? " · the words were rewritten since; pin left where they were" : "");
-    const tags = isAgent(c) ? `<div class="tags"><span class="tag who">${escapeHtml(c.author)}</span>` + (c.severity ? `<span class="tag sev-${escapeHtml(c.severity)}">${escapeHtml(c.severity)}</span>` : "")
-      + (c.category ? `<span class="tag">${escapeHtml(c.category)}</span>` : "") + (c.status !== "open" ? `<span class="tag">${c.status}</span>` : "") + `</div>` : "";
+    const docTag = DOCS.length > 1 ? `<span class="tag doc" title="the document this comment is on">${escapeHtml((DOCS.find(x => x.name === docOf(c)) || {}).title || docOf(c))}</span>` : "";
+    const tags = isAgent(c) || docTag ? `<div class="tags">` + docTag + (isAgent(c) ? `<span class="tag who">${escapeHtml(c.author)}</span>` + (c.severity ? `<span class="tag sev-${escapeHtml(c.severity)}">${escapeHtml(c.severity)}</span>` : "")
+      + (c.category ? `<span class="tag">${escapeHtml(c.category)}</span>` : "") + (c.status !== "open" ? `<span class="tag">${c.status}</span>` : "") : "") + `</div>` : "";
     d.innerHTML = tags + `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
       `<div>${escapeHtml(c.text)}</div>` + (c.suggestion ? `<div class="suggest"><b>suggested:</b> ${escapeHtml(c.suggestion)}</div>` : "") + `${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
       `<textarea rows="2" placeholder="reply, typed or spoken"></textarea><div class="actions"><button data-a="reply">reply</button>` +
@@ -308,6 +351,7 @@ function renderList() {
     d.querySelector(".actions").prepend(micButton(ta, (b) => { blob = b; }));
     d.querySelectorAll("button[data-a]").forEach(b => b.onclick = async () => {
       const act = b.dataset.a;
+      if (act === "goto" && docOf(c) !== DOC) await switchDoc(docOf(c));   // a comment on the other document: its tab first
       if (act === "goto" && !pages[c.page]) return;
       if (act === "goto") { if (MOBILE) document.body.classList.remove("side"); const vr = viewer.getBoundingClientRect(), pr = pages[c.page].div.getBoundingClientRect();
         viewer.scrollTo({ top: viewer.scrollTop + (pr.top - vr.top) + c.y_pt * SCALE - 120, behavior: "smooth" }); return; }
@@ -332,14 +376,18 @@ async function refresh() {
   comments = await (await fetch("/api/comments")).json();
   const st = await (await fetch("/api/status")).json();
   document.getElementById("paper").textContent = st.paper; WHO = { reviewer: st.reviewer, editor: st.editor }; VOICE = st.voice || null;
+  DOCS = st.docs || [{ name: "main", title: "paper", pdf_mtime: st.pdf_mtime }];   // an older server: one document
+  if (!DOC || !DOCS.some(d => d.name === DOC)) { let want = null; try { want = localStorage.getItem("paperdesk.doc"); } catch (e) {}
+    DOC = DOCS.some(d => d.name === want) ? want : DOCS[0].name; }
   if (st.kind === "docx") document.querySelector("#side .hint").textContent = "Select words on the page, or click a figure or a table, then write. Each comment is anchored to the paragraph of the Word document those words come from, its heading path and the table or image beside it.";
   statusEl.textContent = (st.build.running ? "building… " : (st.build.ok === false ? "build FAILED " : "")) + `${st.n_open} open` + (st.n_proposed ? ` · ${st.n_proposed} proposed` : "") + (st.watched ? "" : " · unwatched");
   statusEl.title = st.watched ? `${st.editor} is watching` : `nobody is watching this desk: comments are saved but ${st.editor} will not see them until "desk.py watch" runs`;
   if (st.build.ok === false) console.warn(st.build.log);
-  if (pdfMtime !== null && st.pdf_mtime !== pdfMtime && !st.build.running) { pdfMtime = st.pdf_mtime; await loadPdf(); }
-  pdfMtime = st.pdf_mtime;
-  const j = JSON.stringify(comments);
-  if (j !== lastJson && !rec) { lastJson = j; renderList(); drawPins(); }   // never rebuild the list mid-recording
+  const mt = docMtime(DOC);
+  if (pdfMtime !== null && mt !== pdfMtime && !st.build.running) { pdfMtime = mt; await loadPdf(); }
+  pdfMtime = mt;
+  const j = JSON.stringify(comments) + "|" + DOC + "|" + DOCS.map(d => d.name).join(",");
+  if (j !== lastJson && !rec) { lastJson = j; renderTabs(); renderList(); drawPins(); }   // never rebuild the list mid-recording
   document.getElementById("toggle").textContent = `comments (${st.n_open})`;
 }
 
@@ -436,5 +484,5 @@ document.getElementById("findnext").onclick = () => goToFind(findAt + 1);
 document.getElementById("findprev").onclick = () => goToFind(findAt - 1);
 document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && !e.target.closest("textarea, input")) { e.preventDefault(); findEl.focus(); findEl.select(); } });
 
-window.__desk = { get pages() { return pages; }, get comments() { return comments; }, get scale() { return SCALE; }, openPopup, refresh, toPt, setScale };
-await loadPdf(); await refresh(); setInterval(refresh, 4000);
+window.__desk = { get pages() { return pages; }, get comments() { return comments; }, get scale() { return SCALE; }, get doc() { return DOC; }, get docs() { return DOCS; }, openPopup, refresh, toPt, setScale, switchDoc, goToRemote };
+await refresh(); await loadPdf(); drawPins(); setInterval(refresh, 4000);   // the status first: it says which documents there are

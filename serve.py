@@ -1,9 +1,11 @@
-"""paperdesk: a local review desk for one LaTeX paper.
+"""paperdesk: a local review desk for one LaTeX paper, or a paper and its supplement.
 
 The built PDF is shown as it is (pdf.js); a selection of words or a click on a figure becomes a comment, and every
 comment is anchored by SyncTeX to the source -- file, line, the enclosing section and figure -- beside the words
 selected, so the person editing the source is told where without searching. Comments and replies live in
-``comments.jsonl`` next to this file; ``desk.py`` reads and answers them from the terminal.
+``comments.jsonl`` next to this file; ``desk.py`` reads and answers them from the terminal. A desk with several
+documents (``[paper] docs``, config.py) shows them as tabs; a comment carries the document it was made on, and a
+reference from one document into the other (xr-hyper's remote links) switches the tab.
 
     python serve.py            (reads paperdesk.toml; open http://127.0.0.1:8765)
 """
@@ -14,13 +16,6 @@ import subprocess
 import sys
 import threading
 import time
-try:
-    import tomllib
-except ModuleNotFoundError:                                # Python 3.10: the same parser as the tomli backport
-    try:
-        import tomli as tomllib
-    except ModuleNotFoundError:
-        raise SystemExit("paperdesk reads its config with tomllib (Python 3.11+); on an older Python run: pip install tomli")
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,11 +23,21 @@ from urllib.parse import urlparse
 HERE = Path(__file__).resolve().parent
 CONFIG = Path(sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].endswith(".toml") else HERE / "paperdesk.toml").resolve()
 DESK = CONFIG.parent                                       # one desk per paper: its config, comments, audio and auth live together
-CFG = tomllib.loads(CONFIG.read_text())
-PAPER = (DESK / CFG["paper"]["dir"]).resolve()
-MAIN = CFG["paper"]["main"]
+import config as _config
+CFG, PAPER, DOCS = _config.load(CONFIG)                    # the documents in tab order; one, as before, when [paper] names main alone
+MAIN = DOCS[0].file
 KIND = CFG["paper"].get("kind") or ("docx" if MAIN.lower().endswith(".docx") else "latex")
-PDF = PAPER / (Path(MAIN).stem + ".pdf")
+PDF = DOCS[0].pdf                                          # the first document's: what a one-document desk and the Word route read
+
+
+def doc_named(name):
+    """The document ``name`` names, the first when none is given; an unknown name is refused by name."""
+    if not name:
+        return DOCS[0]
+    for d in DOCS:
+        if d.name == name:
+            return d
+    raise KeyError(f"no document {name!r} on this desk; it has {[d.name for d in DOCS]}")
 STORE = DESK / "comments.jsonl"
 AUDIO = DESK / "audio"                                     # voice comments, one file per comment or reply
 AUDIO.mkdir(exist_ok=True)
@@ -57,8 +62,8 @@ def save_comments(items):
     _store.save(STORE, items)
 
 
-def _resolve_latex(page, x_pt, y_pt):
-    file, line, err = _anchor.synctex_edit(PAPER, PDF, page, x_pt, y_pt)
+def _resolve_latex(doc, page, x_pt, y_pt):
+    file, line, err = _anchor.synctex_edit(PAPER, doc.pdf, page, x_pt, y_pt)
     if file is None:
         return dict(file=None, line=None, error=err)
     return dict(file=file, line=line, **_anchor.context_of(PAPER, file, line))
@@ -190,18 +195,19 @@ def resolve_docx(page, x_pt, y_pt, quote=""):
                 source=[dict(line=j + 1, text=paras[j]["text"][:300]) for j in range(max(i - 1, 0), min(i + 2, len(paras)))])
 
 
-def resolve(page, x_pt, y_pt, quote=""):
-    """The anchor of a point on a page, or an unanchored record naming why: a comment is never lost to its anchor."""
+def resolve(page, x_pt, y_pt, quote="", doc=None):
+    """The anchor of a point on a page of document ``doc`` (the first by default), or an unanchored record naming
+    why: a comment is never lost to its anchor."""
     try:
-        return _resolve(int(page), float(x_pt), float(y_pt), quote or "")
+        return _resolve(doc_named(doc), int(page), float(x_pt), float(y_pt), quote or "")
     except Exception as e:                                      # noqa: BLE001 -- whatever the resolver raised, the comment is kept
         return dict(file=None, line=None, error=f"{type(e).__name__}: {e}")
 
 
-def _resolve(page, x_pt, y_pt, quote):
+def _resolve(doc, page, x_pt, y_pt, quote):
     if KIND == "docx":
         return resolve_docx(page, x_pt, y_pt, quote)
-    return _resolve_latex(page, x_pt, y_pt)
+    return _resolve_latex(doc, page, x_pt, y_pt)
 
 
 # ----------------------------------------------------------------- voice
@@ -223,37 +229,55 @@ def transcribe_later(cid, reply_index, path):
 
 
 # ----------------------------------------------------------------- the build
-_ANCHORED = {"mtime": None, "running": False}
+_ANCHORED = {"mtimes": None, "running": False}
 _ANCHORED_FILE = DESK / ".anchored_mtime"
 
 
+def _anchored_mtimes():
+    """The PDF mtime each document's comments were last re-anchored to, kept beside the record (``{name: mtime}``;
+    a bare number from an older desk is the first document's)."""
+    if _ANCHORED["mtimes"] is None:
+        _ANCHORED["mtimes"] = {}
+        if _ANCHORED_FILE.exists():
+            raw = _ANCHORED_FILE.read_text().strip()
+            try:
+                v = json.loads(raw)
+                _ANCHORED["mtimes"] = v if isinstance(v, dict) else {DOCS[0].name: float(v)}
+            except ValueError:
+                pass
+    return _ANCHORED["mtimes"]
+
+
 def reanchor_if_rebuilt():
-    """Once per new PDF, in the background: every live comment moved to where its words are now and its source
-    anchor refreshed (:func:`anchor.reanchor`), under the record's lock. The PDF's mtime it last ran for is kept
-    beside the record, so a restart does not redo it and a build by any route (the button, latexmk by hand, an
-    agent) triggers it."""
-    if KIND != "latex" or not PDF.exists():
+    """Once per new PDF of each document, in the background: every live comment on it moved to where its words
+    are now and its source anchor refreshed (:func:`anchor.reanchor`), under the record's lock. The mtime it last
+    ran for is kept beside the record, so a restart does not redo it and a build by any route (the button, latexmk
+    by hand, an agent) triggers it."""
+    if KIND != "latex":
         return
-    mt = PDF.stat().st_mtime
-    if _ANCHORED["mtime"] is None and _ANCHORED_FILE.exists():
-        try:
-            _ANCHORED["mtime"] = float(_ANCHORED_FILE.read_text().strip())
-        except ValueError:
-            pass
+    for d in DOCS:
+        if d.pdf.exists():
+            _reanchor_doc(d)
+
+
+def _reanchor_doc(d):
+    mt = d.pdf.stat().st_mtime
+    done = _anchored_mtimes()
     with LOCK:
-        if _ANCHORED["running"] or _ANCHORED["mtime"] == mt or BUILD["running"]:
+        if _ANCHORED["running"] or done.get(d.name) == mt or BUILD["running"]:
             return
         _ANCHORED["running"] = True
     def run():
         try:
-            words = _anchor.pdf_words(PDF)
+            words = _anchor.pdf_words(d.pdf)
             with _store.locked(STORE) as items:
-                moved, stale = _anchor.reanchor(PAPER, PDF, items, words)
+                mine = [c for c in items if _config.doc_of(DOCS, c) is d]
+                moved, stale = _anchor.reanchor(PAPER, d.pdf, mine, words)
                 save_comments(items)
-            print(f"re-anchored to the PDF of {time.strftime('%H:%M:%S', time.localtime(mt))}: {moved} moved, {stale} newly stale", flush=True)
-            _ANCHORED["mtime"] = mt; _ANCHORED_FILE.write_text(str(mt))
+            print(f"re-anchored {d.name} to the PDF of {time.strftime('%H:%M:%S', time.localtime(mt))}: {moved} moved, {stale} newly stale", flush=True)
+            done[d.name] = mt; _ANCHORED_FILE.write_text(json.dumps(done))
         except Exception as e:                               # noqa: BLE001  (never take the desk down over a pin)
-            print(f"re-anchoring failed: {e}", flush=True)
+            print(f"re-anchoring {d.name} failed: {e}", flush=True)
         finally:
             _ANCHORED["running"] = False
     threading.Thread(target=run, daemon=True).start()
@@ -265,16 +289,25 @@ def watched():
     return hb.exists() and time.time() - hb.stat().st_mtime < 10
 
 
-def rebuild():
+def rebuild(doc=None):
+    """Build every document in order (or the one named), one command each, in the background; a build command
+    without ``{doc}`` is one command for all and runs once."""
+    cmds = list(dict.fromkeys(d.build for d in (DOCS if doc is None else [doc_named(doc)]) if d.build))
+    if not cmds:
+        return False
     with LOCK:
         if BUILD["running"]:
             return False
         BUILD.update(running=True, log="", ok=None)
     def run():
-        r = subprocess.run(CFG["paper"]["build"], shell=True, cwd=PAPER, capture_output=True, text=True)
-        tail = (r.stdout + r.stderr)[-4000:]
+        ok, log = True, ""
+        for cmd in cmds:
+            r = subprocess.run(cmd, shell=True, cwd=PAPER, capture_output=True, text=True)
+            log += (r.stdout + r.stderr)[-4000:]; ok = ok and r.returncode == 0
+            if r.returncode != 0:
+                break
         with LOCK:
-            BUILD.update(running=False, log=tail, ok=(r.returncode == 0), finished=time.time())
+            BUILD.update(running=False, log=log[-4000:], ok=ok, finished=time.time())
     threading.Thread(target=run, daemon=True).start()
     return True
 
@@ -323,10 +356,16 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/app.js":
             return self._send(200, (HERE / "static" / "app.js").read_bytes(), "application/javascript")
         if u.path == "/pdf":
-            if not PDF.exists():
-                return self._send(404, {"error": "no PDF built yet"})
-            save = {"Content-Disposition": f'attachment; filename="{PDF.name}"'} if "download" in u.query else None
-            return self._send(200, PDF.read_bytes(), "application/pdf", save)
+            from urllib.parse import parse_qs
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            try:
+                d = doc_named(q.get("doc"))
+            except KeyError as e:
+                return self._send(404, {"error": str(e)})
+            if not d.pdf.exists():
+                return self._send(404, {"error": f"no PDF of {d.name} built yet"})
+            save = {"Content-Disposition": f'attachment; filename="{d.pdf.name}"'} if "download" in q else None
+            return self._send(200, d.pdf.read_bytes(), "application/pdf", save)
         if u.path == "/api/comments":
             reanchor_if_rebuilt()
             return self._send(200, load_comments())
@@ -340,6 +379,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 b = dict(BUILD)
             return self._send(200, dict(paper=str(PAPER), kind=KIND, reviewer=REVIEWER, editor=EDITOR, voice=VOICE, watched=watched(), pdf_mtime=(PDF.stat().st_mtime if PDF.exists() else None), build=b,
+                                        docs=[dict(name=d.name, title=d.title, file=d.file, pdf_mtime=(d.pdf.stat().st_mtime if d.pdf.exists() else None)) for d in DOCS],
                                         n_open=sum(1 for c in load_comments() if c.get("status") == "open"),
                                         n_proposed=sum(1 for c in load_comments() if c.get("status") == "proposed")))
         return self._send(404, {"error": "not found"})
@@ -360,17 +400,18 @@ class Handler(BaseHTTPRequestHandler):
                 if KIND != "latex":
                     return self._send(400, {"error": "source-anchored comments need a LaTeX desk"})
                 try:
-                    c = _anchor.comment_from_source(PAPER, PDF, d, d.get("author") or "agent")
+                    c = _anchor.comment_from_source(PAPER, [(x.name, x.pdf) for x in DOCS], d, d.get("author") or "agent")
                 except (LookupError, ValueError) as e:
                     return self._send(400, {"error": str(e)})
                 with _store.locked(STORE) as items:
                     c = dict(id=_store.next_id(items), **c)
                     items.append(c); save_comments(items)
                 return self._send(200, c)
-            anchor = resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", ""))
+            doc = doc_named(d.get("doc")).name
+            anchor = resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", ""), doc)
             with _store.locked(STORE) as items:
                 cid = _store.next_id(items)
-                c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
+                c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER, doc=doc,
                          text=d.get("text", ""), quote=d.get("quote", ""), page=int(d["page"]),
                          x_pt=float(d["x_pt"]), y_pt=float(d["y_pt"]), rect=d.get("rect"), anchor=anchor, replies=[])
                 items.append(c); save_comments(items)
@@ -417,10 +458,10 @@ class Handler(BaseHTTPRequestHandler):
                 c = dict(c, warning="stored without words: " + VOICE["reason"])
             return self._send(200, c)
         if u.path == "/api/rebuild":
-            return self._send(200, {"started": rebuild()})
+            return self._send(200, {"started": rebuild(self._json().get("doc"))})
         if u.path == "/api/resolve":                             # a dry resolution, for the popup's preview
             d = self._json()
-            return self._send(200, resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", "")))
+            return self._send(200, resolve(d["page"], d["x_pt"], d["y_pt"], d.get("quote", ""), d.get("doc")))
         return self._send(404, {"error": "not found"})
 
     def _voice_record(self, q, ext, dictation, stash):
@@ -435,9 +476,10 @@ class Handler(BaseHTTPRequestHandler):
                                          dictation=dictation, audio=fname, created=time.strftime("%Y-%m-%d %H:%M:%S")))
                 reply_index = len(c["replies"]) - 1
             else:
-                anchor = resolve(q["page"], q["x_pt"], q["y_pt"], q.get("quote", ""))
+                doc = doc_named(q.get("doc")).name
+                anchor = resolve(q["page"], q["x_pt"], q["y_pt"], q.get("quote", ""), doc)
                 cid = _store.next_id(items); fname = f"{cid}.{ext}"
-                c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER,
+                c = dict(id=cid, created=time.strftime("%Y-%m-%d %H:%M:%S"), status="open", author=REVIEWER, doc=doc,
                          text=dictation or "(voice note, transcribing)", dictation=dictation, audio=fname, quote=q.get("quote", ""),
                          page=int(q["page"]), x_pt=float(q["x_pt"]), y_pt=float(q["y_pt"]),
                          rect=(json.loads(q["rect"]) if q.get("rect") else None), anchor=anchor, replies=[])
@@ -454,7 +496,7 @@ def main():
         print(f"building {PDF.name} from {MAIN}", flush=True); rebuild()
     if "--host" in sys.argv:
         host = sys.argv[sys.argv.index("--host") + 1]
-    print(f"paperdesk on http://{host}:{port}  {KIND} {PAPER / MAIN}  pdf {PDF.name}  comments {STORE}", flush=True)
+    print(f"paperdesk on http://{host}:{port}  {KIND} {PAPER}  documents {', '.join(f'{d.file} -> {d.pdf.name}' for d in DOCS)}  comments {STORE}", flush=True)
     if not watched():
         cfg = f" {CONFIG}" if CONFIG != HERE / "paperdesk.toml" else ""
         print(f"no watcher: run  python desk.py{cfg} watch  (and keep it running) so comments reach the editor; "

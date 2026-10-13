@@ -29,26 +29,18 @@ import sys
 import time
 from pathlib import Path
 
+import config
 import store
 
-try:
-    import tomllib
-except ModuleNotFoundError:                                # Python 3.10: the same parser as the tomli backport
-    try:
-        import tomli as tomllib
-    except ModuleNotFoundError:
-        raise SystemExit("paperdesk reads its config with tomllib (Python 3.11+); on an older Python run: pip install tomli")
 HERE = Path(__file__).resolve().parent
 _ARGS = [a for a in sys.argv[1:] if a.endswith(".toml")]
 CONFIG = Path(_ARGS[0]).resolve() if _ARGS else HERE / "paperdesk.toml"
 sys.argv = [a for a in sys.argv if not a.endswith(".toml")]
 STORE = CONFIG.parent / "comments.jsonl"
-_CFG = tomllib.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+_CFG, PAPER, DOCS = config.load(CONFIG)                      # the desk's documents in tab order (one, as before, when [paper] names main alone)
 REVIEWER = _CFG.get("people", {}).get("reviewer", "reviewer")
 EDITOR = _CFG.get("people", {}).get("editor", "editor")
-_PAPER_CFG = _CFG.get("paper", {})
-PAPER = (CONFIG.parent / _PAPER_CFG.get("dir", ".")).resolve()
-PDF = PAPER / (Path(_PAPER_CFG.get("main", "main.tex")).stem + ".pdf")
+PDF = DOCS[0].pdf
 
 
 def load():
@@ -73,7 +65,7 @@ def add(d):
     """One source-anchored comment into the record: its id and where it landed, or why it was refused."""
     import anchor
     try:
-        c = anchor.comment_from_source(PAPER, PDF, d, d.get("author") or "agent")
+        c = anchor.comment_from_source(PAPER, [(x.name, x.pdf) for x in DOCS], d, d.get("author") or "agent")
     except (LookupError, ValueError) as e:
         return None, str(e)
     with store.locked(STORE) as items:
@@ -92,6 +84,8 @@ def line_of(c):
     a = c.get("anchor") or {}
     tags = " ".join(x for x in (c.get("author") if c.get("author") != REVIEWER else None, c.get("severity"), c.get("category")) if x)
     where = f"{a.get('file')}:{'¶' if a.get('unit') == 'paragraph' else ''}{a.get('line')}" if a.get("file") and a.get("line") else f"page {c['page']} (unresolved)"
+    if len(DOCS) > 1:                                        # which document the pin is on, when the desk has several
+        where = f"[{config.doc_of(DOCS, c).name}] " + where
     sec = a.get("section") or ""
     lab = f" [{a['float']} {a.get('label')}]" if a.get("float") else ""
     q = (c.get("quote") or "").strip().replace("\n", " ")
@@ -116,6 +110,7 @@ def main(argv):
         print(json.dumps({k: v for k, v in c.items() if k != "anchor"}, indent=1, ensure_ascii=False))
         a = c.get("anchor") or {}
         unit = "¶" if a.get("unit") == "paragraph" else ""
+        print(f"document: {config.doc_of(DOCS, c).name} page {c.get('page')}")
         print(f"anchor: {a.get('file')}:{unit}{a.get('line')}  section: {a.get('section')}  float: {a.get('float')} {a.get('label')}"
               + (f"  matched: '{a.get('matched')}' at offset {a.get('offset')}" if a.get("matched") else ""))
         for s in a.get("source", []):
@@ -155,16 +150,22 @@ def main(argv):
                 refused += 1; print(f"REFUSED {d.get('file')}: {err}")
             else:
                 a = c["anchor"]
-                print(f"#{c['id']} {a['file']}:{a['line']} page {c['page']}" + (f"  ({a['error']})" if a.get("error") else ""))
+                print(f"#{c['id']} {a['file']}:{a['line']} {c.get('doc', '')} page {c['page']}".replace("  ", " ") + (f"  ({a['error']})" if a.get("error") else ""))
         if refused:
             raise SystemExit(f"{refused} of {len(rows)} refused")
-    elif cmd == "reanchor":                                  # every live comment to where its words are in the PDF built now
+    elif cmd == "reanchor":                                  # every live comment to where its words are in the PDFs built now
         import anchor
+        done = {}
         with store.locked(STORE) as items:
-            moved, stale = anchor.reanchor(PAPER, PDF, items)
+            for d in DOCS:
+                if not d.pdf.exists():
+                    print(f"{d.name}: no PDF built"); continue
+                mine = [c for c in items if config.doc_of(DOCS, c) is d]
+                moved, stale = anchor.reanchor(PAPER, d.pdf, mine)
+                done[d.name] = d.pdf.stat().st_mtime
+                print(f"{d.name}: {moved} moved, {stale} newly stale (their words were rewritten; marked on the page)")
             store.save(STORE, items)
-        (CONFIG.parent / ".anchored_mtime").write_text(str(PDF.stat().st_mtime))
-        print(f"{moved} moved, {stale} newly stale (their words were rewritten; marked on the page)")
+        (CONFIG.parent / ".anchored_mtime").write_text(json.dumps(done))
     elif cmd == "transcribe":
         # the words of the voice notes that have none (all of them, or one comment's), once a model is installed
         import voice

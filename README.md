@@ -1,10 +1,10 @@
 # paperdesk
 
-A local review desk for one document, a LaTeX paper or a Word file: the built PDF as it is, a comment from any
-selection of words or a click on a figure, and every comment anchored to the source -- file, line or paragraph,
-enclosing section, float and label -- beside the words selected. The person editing the source reads the comments
-from the terminal with the anchor and never searches the manuscript for the sentence. A LaTeX paper is anchored by
-SyncTeX; a Word document by the text itself (below).
+A local review desk for one document, a LaTeX paper or a Word file, or for a paper and its supplement side by
+side: the built PDF as it is, a comment from any selection of words or a click on a figure, and every comment
+anchored to the source -- file, line or paragraph, enclosing section, float and label -- beside the words selected.
+The person editing the source reads the comments from the terminal with the anchor and never searches the
+manuscript for the sentence. A LaTeX paper is anchored by SyncTeX; a Word document by the text itself (below).
 
     python serve.py                # http://127.0.0.1:8765 (paperdesk.toml names the paper; --host 0.0.0.0 to expose; Python 3.11+, or pip install tomli)
     python serve.py other/paperdesk.toml   # a second desk: its comments, audio and auth live beside its config
@@ -36,6 +36,29 @@ replies. The paper needs `\synctex=1` in its preamble or `-synctex=1` on its eng
 standard library only on Python 3.11 and later; Python 3.10 needs `pip install tomli` for the config, and nothing else.
 A comment whose anchor cannot be resolved is still saved, unanchored, with the reason; a voice note is written to
 disk before anything else is done with the request, and a request that fails is shown on the page with its reason.
+
+## A paper and its supplement
+
+A desk serves several documents built from one source tree when `[paper] docs` lists them (`config.py`):
+
+    [paper]
+    dir = "../paper"
+    docs = [{file = "main.tex", title = "paper"}, {file = "supplement.tex", title = "supplement"}]
+    build = "latexmk -pdf -synctex=1 -interaction=nonstopmode -halt-on-error {doc}"
+
+The page shows them as tabs in the top bar, each with its count of open comments, one document on show at a
+time and each remembering its own reading position. A comment carries the document it was made on (`doc` in
+`comments.jsonl`; a record without it is the first document's), its pin appears on that document only, its card
+names the document, and "go to" switches tabs when needed. The rebuild button builds every document in order,
+`{doc}` standing for each file in turn (a build command without it runs once). `desk.py list` prefixes each anchor
+with `[document]` on such a desk, and a review agent's comment from the source lands on whichever document typeset
+the quoted line (an appendix file on the supplement), tried in tab order.
+
+Cross-references work when the paper makes them links: with `xr-hyper` in place of `xr`, loaded before
+`hyperref` (`\RequirePackage{xr-hyper}` above `\documentclass` when the class loads hyperref itself) and
+`\externaldocument{supplement}` as before, every `\ref` into the other document becomes a remote link to its
+PDF, which pdf.js reports as `supplement.pdf#dest`; the desk opens that tab and scrolls to the destination. `xr`
+alone links to a destination of the same name in the current document, which is the wrong place or none.
 
 ## Working with a coding agent
 

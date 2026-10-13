@@ -18,3 +18,6 @@ You are the editor of the document this desk serves; the reviewer comments on th
    comments start `proposed`; triage with `desk.py list --proposed`, `accept ID ...`, `dismiss ID ... "why"`.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
+A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in
+`desk.py list` with the document, `[supplement] sections/appendix.tex:12`; a comment's `doc` says which PDF its page
+number counts in, and `desk.py add` lands a source comment on whichever document typeset the quoted line.
