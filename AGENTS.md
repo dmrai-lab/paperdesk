@@ -46,6 +46,14 @@ You are the editor of the document this desk serves; the reviewer comments on th
    `major` (`--category reference`): find the right DOI or the real work, and never invent one. A title, author or year
    that disagrees: look at the record, then say which side is wrong; a book's other edition or a paper's online year is
    a note, not an error.
+10. Asked for brevity: `python desk.py brevity`. For each sentence candidate, read its paragraph and rewrite the
+   sentence shorter in the author's voice: the action as the verb, the actor as the subject, a long sentence split
+   where it carries two claims; for a pair of neighbours, fuse them or cut the one that restates the other. List the
+   claims of the original and of the rewrite, and keep the rewrite only when the two lists match both ways. Write
+   each as a JSON line with `file`, `line`, `quote` and `original` from `brevity.json`, the rewrite as `suggestion`,
+   and `text` naming the move (fused with the next sentence, the nominal made a verb, ...); run
+   `python desk.py brevity --verify FILE`, never post a refused one, and post the kept file with `desk.py add --jsonl`
+   after setting `category` to `brevity`, `severity` to `style` and `author` to `ai:brevity`.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in

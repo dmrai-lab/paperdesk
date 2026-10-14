@@ -180,6 +180,26 @@ is, and Crossref, then arXiv, for an entry with neither, by its title. It report
 nowhere, and a title, first author or year that is not the record's, each on the first line that cites the entry.
 Only the bibliography's own metadata goes out; answers are cached in `.refcheck.json`.
 
+## Brevity
+
+    python desk.py brevity                       # where the paper could say the same in fewer words
+    python desk.py brevity --verify rewrites.jsonl   # what a proposed shorter version would lose
+
+`brevity` ranks the sentences by the patterns of Lanham's Paramedic Method, as proselint, write-good and Vale encode
+them: chains of "of" (the colour of the cat), a noun made of a verb behind a weak verb (perform an evaluation of),
+openers that delay the subject, throat-clearing (in order to), redundant pairs, passives that name their agent,
+stacked hedges, signposting, and sentences of 40 words or more. It ranks the adjacent sentences of each paragraph by
+how alike they are (a sentence restating its neighbour, a paragraph's end summing up its start: the pairs `dedup`
+skips) and counts the words per section, against `[brevity] budget` when set. `brevity.json` carries each
+candidate's source.
+
+The rewriting is an agent's, with the paragraph in view. `--verify` is the gate it passes before anything is posted:
+a rewrite is refused when it drops a citation, a cross-reference, a number or its unit, inline maths, an emphasised
+term, a negation, or a quantifier or hedge (only, every, at most, approximately, may), or when it is not shorter.
+The rewrites that pass are written to `rewrites.kept.jsonl` with the words each saves, ready for `desk.py add --jsonl`.
+Whether the claims are the same both ways is still the agent's judgement; the gate catches what a shortening drops
+without noticing.
+
 ## A Word document
 
 Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does

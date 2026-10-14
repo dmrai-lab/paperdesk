@@ -19,3 +19,5 @@ readinglist.json
 check.json
 refcheck.json
 .refcheck.json
+brevity.json
+.brevity_cache.npz

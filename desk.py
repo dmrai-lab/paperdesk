@@ -41,6 +41,13 @@ Whole-paper checks (LaTeX desks):
     python desk.py refcheck            every .bib entry against the record its DOI (doi.org), arXiv id or title (Crossref)
                                        finds: an unregistered DOI, a work not found, a title, first author or year that
                                        is not the record's; also written to refcheck.json, placed on the first citing line
+    python desk.py brevity [--top N]   the sentences with the most to cut (Paramedic patterns: chains of 'of', weak
+                                       verbs, throat-clearing, ...), the neighbours that restate each other, and the
+                                       words per section ([brevity] budget); also written to brevity.json, with each
+                                       sentence's source
+    python desk.py brevity --verify F.jsonl   proposed rewrites ("original", "suggestion") through the gate: what a
+                                       rewrite drops (citations, references, numbers, maths, negations, quantifiers,
+                                       hedges) refuses it; the rest go to F.kept.jsonl with the words each saves
     python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
                                        (references identified by DOI, through Crossref when they carry none)
 """
@@ -126,8 +133,8 @@ def _cap_threads(n):
 
 def main(argv):
     cmd = argv[0] if argv else "list"
-    if cmd in ("dedup", "citestats", "uncited", "readinglist"):
-        _cap_threads(int(_CFG.get("citations" if cmd != "dedup" else "dedup", {}).get("threads", 8)))
+    if cmd in ("dedup", "citestats", "uncited", "readinglist", "brevity"):
+        _cap_threads(int(_CFG.get("citations" if cmd not in ("dedup", "brevity") else "dedup", {}).get("threads", 8)))
     if cmd == "list":
         argv = list(argv); who = _opt(argv, "--author")
         want = None if "--all" in argv else ("proposed" if "--proposed" in argv else "open")
@@ -259,6 +266,35 @@ def main(argv):
         found, caps, notes = check.run(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")], CONFIG.parent / "dedup.json")
         check.save(found, caps, CONFIG.parent / "check.json")
         print(check.report(found, caps, notes))
+    elif cmd == "brevity":
+        # where the paper could be shorter, and the gate for a shorter version; brevity.py says how
+        import brevity
+        argv = list(argv[1:]); src = _opt(argv, "--verify")
+        if src:
+            rows = [json.loads(l) for l in Path(src).read_text().splitlines() if l.strip()]
+            kept, dropped = brevity.verify(rows)
+            out = Path(src).with_suffix(".kept.jsonl")
+            out.write_text("".join(json.dumps({k: v for k, v in d.items() if k != "original"}, ensure_ascii=False) + "\n"
+                                   for d in kept))
+            for d in dropped:
+                print(f"REFUSED {d.get('file')}:{d.get('line')}  " + "; ".join(d["lost"]))
+            print(f"{len(kept)} of {len(rows)} kept ({sum(d['saved'] for d in kept)} words saved) in {out}")
+            return
+        import dedup
+        import prose
+        top = int(_opt(argv, "--top") or 60)
+        opts = _CFG.get("brevity", {}); dopts = _CFG.get("dedup", {})
+        sents = prose.paper_sentences(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")])
+        try:
+            emb = dedup.embed([s.text for s in sents], dopts.get("model", dedup.MODEL), CONFIG.parent / ".brevity_cache.npz",
+                              int(dopts.get("threads", 8)))
+            pairs = brevity.neighbour_candidates(sents, emb, top // 2)
+        except SystemExit as e:
+            print(f"neighbours not compared: {e}", file=sys.stderr); pairs = []
+        cands = brevity.sentence_candidates(sents, top)
+        counts = brevity.words_per_section(sents, opts.get("budget"))
+        (CONFIG.parent / "brevity.json").write_text(json.dumps(brevity.to_json(cands, pairs, counts), indent=1, ensure_ascii=False))
+        print(brevity.report(cands, pairs, counts))
     elif cmd == "refcheck":
         # the bibliography against the records; refcheck.py says how
         import check

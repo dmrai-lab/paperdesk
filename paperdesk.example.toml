@@ -39,3 +39,8 @@ glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, 
 # model = "copenlu/citebert"
 # threads = 8
 # mailto = "you@example.org"           # readinglist: Crossref's polite pool
+
+# desk.py brevity: optional word budgets per section class (introduction, theory, methods, results, discussion,
+# conclusion, appendix); the neighbour comparison uses [dedup] model and threads
+# [brevity]
+# budget = {introduction = 1200, results = 4000, discussion = 1200}
