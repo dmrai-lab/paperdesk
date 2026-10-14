@@ -37,6 +37,14 @@ standard library only on Python 3.11 and later; Python 3.10 needs `pip install t
 A comment whose anchor cannot be resolved is still saved, unanchored, with the reason; a voice note is written to
 disk before anything else is done with the request, and a request that fails is shown on the page with its reason.
 
+When the PDF is rebuilt, every open or proposed comment moves to where its words are now, in its own file, in another
+source file, or in the desk's other document, which it then belongs to. A comment whose words are nowhere (cut or
+rewritten) keeps its place and is marked stale with the time of that build: its card says so in red, its pin is
+dimmed and outlined, and the highlight over what stands there now is dropped. `desk.py list --stale` names, for
+each, the commit that cut its words; `desk.py watch` prints a line the moment a rebuild leaves one stale, so whoever
+edited the source resolves it, or replies where its point now applies. A box SyncTeX gives a float's line is cut to
+its page.
+
 ## A paper and its supplement
 
 A desk serves several documents built from one source tree when `[paper] docs` lists them (`config.py`):

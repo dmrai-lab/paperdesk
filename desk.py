@@ -1,9 +1,12 @@
 """The terminal side of paperdesk: what the person editing the source reads and answers.
 
     python desk.py watch               KEEP THIS RUNNING when the editor is an agent: one line per new comment, per reply
-                                       by the reviewer, and per voice note whose words land; its heartbeat is what the
-                                       page and the server call "watched"
+                                       by the reviewer, per voice note whose words land, and per live comment whose
+                                       words a rebuild no longer finds; its heartbeat is what the page and the server
+                                       call "watched"
     python desk.py [desk/paperdesk.toml] list [--all]   the open comments (or every one), each with its anchor and quote
+    python desk.py list --stale        the live comments whose words are gone from the source, with the commit that took
+                                       them out: resolve each, or reply where its point now applies
     python desk.py show ID             one comment in full, with the source lines around its anchor
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
@@ -136,7 +139,15 @@ def main(argv):
     cmd = argv[0] if argv else "list"
     if cmd in ("dedup", "citestats", "uncited", "readinglist", "brevity"):
         _cap_threads(int(_CFG.get("citations" if cmd not in ("dedup", "brevity") else "dedup", {}).get("threads", 8)))
-    if cmd == "list":
+    if cmd == "list" and "--stale" in argv:
+        import anchor
+        for c in load():
+            a = c.get("anchor") or {}
+            if a.get("stale") and c["status"] in ("open", "proposed"):
+                gone = anchor.removed_by(PAPER, a.get("file"), c.get("quote"))
+                since = f" since the build of {a['stale']}" if isinstance(a["stale"], str) else ""
+                print(line_of(c) + f"\n    stale: {gone or 'its words are gone' + since + '; the commit that cut them was not found'}")
+    elif cmd == "list":
         argv = list(argv); who = _opt(argv, "--author")
         want = None if "--all" in argv else ("proposed" if "--proposed" in argv else "open")
         for c in load():
@@ -200,7 +211,7 @@ def main(argv):
                 if not d.pdf.exists():
                     print(f"{d.name}: no PDF built"); continue
                 mine = [c for c in items if config.doc_of(DOCS, c) is d]
-                moved, stale = anchor.reanchor(PAPER, d.pdf, mine)
+                moved, stale = anchor.reanchor(PAPER, d.pdf, mine, docs=[(x.name, x.pdf) for x in DOCS if x.pdf.exists()])
                 done[d.name] = d.pdf.stat().st_mtime
                 print(f"{d.name}: {moved} moved, {stale} newly stale (their words were rewritten; marked on the page)")
             store.save(STORE, items)
@@ -224,10 +235,13 @@ def main(argv):
             store.save(STORE, items)
             print(f"#{c['id']}{'' if i is None else f' reply {i}'}: {target['text']}")
     elif cmd == "watch":
-        # a new comment, a new reply by the author, or a voice note whose words landed: one line each
+        # a new comment, a new reply by the author, a voice note whose words landed, or a live comment whose words a
+        # rebuild no longer finds: one line each
         def state(items):
             out = {}
             for c in items:
+                if (c.get("anchor") or {}).get("stale") and c["status"] in ("open", "proposed"):
+                    out[("s", c["id"])] = c.get("quote") or ""
                 if (c.get("author") or REVIEWER) != REVIEWER and c.get("accepted_by") != REVIEWER:
                     continue                                    # an agent's comment is news once the reviewer accepts it
                 out[("c", c["id"])] = c["text"]
@@ -240,11 +254,16 @@ def main(argv):
             items = load(); now = state(items)
             for k, text in now.items():
                 if k not in seen:
-                    if k[0] == "c":
+                    if k[0] == "s":
+                        c = next(x for x in items if x["id"] == k[1]); a = c.get("anchor") or {}
+                        print(f"#{k[1]} stale: its words are no longer in {a.get('file')} (or anywhere in the paper); "
+                              f"resolve it, or reply where its point now applies (desk.py list --stale) | quote: "
+                              f"\"{' '.join(text.split())[:90]}\"", flush=True)
+                    elif k[0] == "c":
                         c = next(x for x in items if x["id"] == k[1]); print(line_of(c).replace("\n", " | "), flush=True)
                     else:
                         print(f"#{k[1]} reply by {REVIEWER}: {text}", flush=True)
-                elif seen[k] != text and not text.startswith("(voice note"):
+                elif k[0] != "s" and seen[k] != text and not text.startswith("(voice note"):
                     print(f"#{k[1]} {'voice note transcribed' if k[0] == 'c' else 'reply transcribed'}: {text}", flush=True)
             seen = now
             try:

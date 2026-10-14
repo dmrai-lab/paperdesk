@@ -272,7 +272,7 @@ def _reanchor_doc(d):
             words = _anchor.pdf_words(d.pdf)
             with _store.locked(STORE) as items:
                 mine = [c for c in items if _config.doc_of(DOCS, c) is d]
-                moved, stale = _anchor.reanchor(PAPER, d.pdf, mine, words)
+                moved, stale = _anchor.reanchor(PAPER, d.pdf, mine, words, [(x.name, x.pdf) for x in DOCS if x.pdf.exists()])
                 save_comments(items)
             print(f"re-anchored {d.name} to the PDF of {time.strftime('%H:%M:%S', time.localtime(mt))}: {moved} moved, {stale} newly stale", flush=True)
             done[d.name] = mt; _ANCHORED_FILE.write_text(json.dumps(done))

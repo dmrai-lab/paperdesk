@@ -63,6 +63,8 @@
   #side { position:absolute; top:var(--top); right:0; width:var(--side); bottom:0; overflow:auto; background:var(--panel); border-left:1px solid var(--rule); padding:12px; box-sizing:border-box; font-size:13px; }
   .c { border:1px solid var(--rule); border-radius:6px; padding:8px 10px; margin-bottom:10px; }
   .c.resolved { opacity:.55; }
+.c.stale { border-color:var(--accent); } .c .gone { font-size:11.5px; color:var(--accent); margin-bottom:4px; }
+.pin.stale { opacity:.5; outline:1px dashed var(--accent); }
   .c .where { color:var(--muted); font-size:11.5px; margin-bottom:4px; word-break:break-all; }
   .c .quote { font-style:italic; color:var(--muted); border-left:2px solid var(--rule); padding-left:6px; margin:4px 0; }
   .c .reply { margin-top:6px; padding:6px 8px; background:var(--bg); border-radius:4px; white-space:pre-wrap; }
