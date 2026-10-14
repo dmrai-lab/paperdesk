@@ -279,7 +279,7 @@ def main(argv):
                                    for d in kept))
             for d in dropped:
                 print(f"REFUSED {d.get('file')}:{d.get('line')}  " + "; ".join(d["lost"]))
-            print(f"{len(kept)} of {len(rows)} kept ({sum(d['saved'] for d in kept)} words saved) in {out}")
+            print(f"{len(kept)} of {len(rows)} kept ({sum(d['saved'] for d in kept)} characters saved) in {out}")
             return
         import dedup
         import prose

@@ -36,6 +36,7 @@ def test_paragraph_of_and_prose_lines():
     s[1].src = "g h i\nj k l"
     find = brevity._paragraph_of(s)
     assert find("r.tex", 13) == ("r.tex", 1) and find("r.tex", 15) is None and find("r.tex", 20) == ("r.tex", 2)
+    assert brevity._holds({"walkers", "cross", "wall"}, "walkers cross the wall") and not brevity._holds({"walkers"}, "the page bins")
     assert brevity._prose_like("encoded (Sec. 3.3).") and not brevity._prose_like("w = −") and not brevity._prose_like("| {z }")
 
 

@@ -161,6 +161,17 @@ def _paragraph_of(sents):
     return find
 
 
+def _words_of(text):
+    return re.findall(r"[a-z]{3,}", text.lower())
+
+
+def _holds(paragraph_words, line_text, share=0.7):
+    """Whether a printed line's words stand in the paragraph: SyncTeX sometimes traces a line to a neighbouring
+    float or paragraph, and the words decide."""
+    w = _words_of(line_text)
+    return not w or sum(x in paragraph_words for x in w) >= share * len(w)
+
+
 def _prose_like(text):
     letters = sum(c.isalnum() for c in text)
     return letters >= 0.6 * len(text.replace(" ", "")) and not re.search(r"[=|{}∑∫]", text)
@@ -180,12 +191,16 @@ class Overhang:
 def overhangs(paper: Path, docs, sents, fill=0.95, workers=4):
     """Every paragraph's last line, when it fills less than ``fill`` of the column: a paragraph loses that line to a
     trim of as many characters as the line holds. ``docs``: ``[(name, pdf), ...]``. Every line of the text column is
-    traced to its source by SyncTeX, so a paragraph's last line is the one whose next traced line belongs to another
-    paragraph (margin line numbers, displays, floats and page furniture trace to none and are skipped). Also
+    traced to its source by SyncTeX and kept only when its words stand in the paragraph it traces to, so a
+    paragraph's last line is the one whose next traced line belongs to another paragraph (margin line numbers,
+    displays, floats and page furniture trace to none and are skipped). Also
     ``(lines, per_page)``: ``{(file, para): lines}`` and the prose lines a full page holds."""
     import anchor
     from concurrent.futures import ThreadPoolExecutor
     find = _paragraph_of(sents)
+    words = {}
+    for s in sents:
+        words.setdefault((s.file, s.para), set()).update(_words_of(s.text))
     out, lines, counts, pages = [], {}, [], {}
     for name, pdf in docs:
         if not pdf.exists():
@@ -198,6 +213,7 @@ def overhangs(paper: Path, docs, sents, fill=0.95, workers=4):
         with ThreadPoolExecutor(workers) as ex:
             src = list(ex.map(trace, col))
         paras = [find(f, n) if f else None for f, n, _ in src]
+        paras = [p if p and _holds(words.get(p, set()), l.text) else None for p, l in zip(paras, col)]
         per = {}
         for i, (l, par) in enumerate(zip(col, paras)):
             if not par:
@@ -333,7 +349,8 @@ def verify(rows):
         n = len(prose.clean(d["original"])) - len(prose.clean(rewrite))
         line = (f"; the last line holds {d['needs']}" if d.get("needs") else "")
         if d.get("edits"):
-            body = "; ".join(f"'{o}' → '{w}'" if w else f"cut '{o}'" for o, w in d["edits"])
+            flat = lambda s: re.sub(r"\s+", " ", s).strip()
+            body = "; ".join(f"'{flat(o)}' → '{flat(w)}'" if w.strip() else f"cut '{flat(o)}'" for o, w in d["edits"])
             text = ((d.get("text") or "").rstrip() + " " if d.get("text") else "") + f"{body} ({n} characters fewer{line})"
             kept.append({**{k: v for k, v in d.items() if k not in ("suggestion",)}, "saved": n, "text": text})
         else:
