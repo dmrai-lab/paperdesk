@@ -12,9 +12,10 @@ import time
 from pathlib import Path
 
 
-def synctex_edit(paper: Path, pdf: Path, page, x_pt, y_pt):
-    """``(file, line, error)`` of the source that typeset the point ``(x, y)``, in TeX points from the page's
-    top-left."""
+PROBES = (0.0, 12.0, 24.0)           # points to the right of the one asked about, along the same line
+
+
+def _synctex_point(paper: Path, pdf: Path, page, x_pt, y_pt):
     try:
         out = subprocess.run(["synctex", "edit", "-o", f"{int(page)}:{float(x_pt):.2f}:{float(y_pt):.2f}:{pdf}"],
                              capture_output=True, text=True, timeout=20, cwd=paper).stdout
@@ -23,12 +24,25 @@ def synctex_edit(paper: Path, pdf: Path, page, x_pt, y_pt):
     m_in, m_ln = re.search(r"^Input:(.*)$", out, re.M), re.search(r"^Line:(\d+)$", out, re.M)
     if not m_in or not m_ln:
         return None, None, out[-300:]
-    f = Path(m_in.group(1).strip())
+    f = (paper / m_in.group(1).strip()).resolve() if not Path(m_in.group(1).strip()).is_absolute() else Path(m_in.group(1).strip()).resolve()
     try:
-        f = f.resolve().relative_to(paper)
+        f = f.relative_to(paper.resolve())
     except ValueError:
         pass
     return str(f), int(m_ln.group(1)), None
+
+
+def synctex_edit(paper: Path, pdf: Path, page, x_pt, y_pt):
+    """``(file, line, error)`` of the source that typeset the point ``(x, y)``, in TeX points from the page's
+    top-left. The file is the one most of three probes along the line agree on (the point and two to its right): the
+    record at a line's left margin carries the file being read when the page was shipped out, which after a float is
+    the float's file, while the glyphs carry their own; the line comes from the first probe in that file."""
+    got = [_synctex_point(paper, pdf, page, x_pt + dx, y_pt) for dx in PROBES]
+    files = [f for f, _, _ in got if f is not None]
+    if not files:
+        return got[0]
+    best = max(dict.fromkeys(files), key=files.count)        # most votes; the leftmost probe's file on a tie
+    return next(r for r in got if r[0] == best)
 
 
 def synctex_view(paper: Path, pdf: Path, file, line):
