@@ -63,8 +63,33 @@ def synctex_view(paper: Path, pdf: Path, file, line):
         if "Page" in rec and "x" in rec and "y" in rec:
             rect = (dict(x=rec["h"], y=rec["v"] - rec["H"], w=rec["W"], h=rec["H"])
                     if all(k in rec for k in ("h", "v", "W", "H")) and rec["W"] > 0 and rec["H"] > 0 else None)
-            return int(rec["Page"]), rec["x"], rec["y"], rect
+            return int(rec["Page"]), rec["x"], rec["y"], on_page(rect, page_size(pdf, int(rec["Page"])))
     return None
+
+
+_SIZES = {}
+
+
+def page_size(pdf: Path, page):
+    """``(width, height)`` of a page in points (``pdfinfo``), None when it cannot be read."""
+    key = (str(pdf), pdf.stat().st_mtime if pdf.exists() else None)
+    if key not in _SIZES:
+        try:
+            out = subprocess.run(["pdfinfo", "-f", "1", "-l", "100000", str(pdf)], capture_output=True, text=True, timeout=30).stdout
+        except Exception:                                    # noqa: BLE001
+            out = ""
+        _SIZES[key] = {int(n): (float(w), float(h)) for n, w, h in re.findall(r"^Page\s+(\d+) size:\s+([\d.]+) x ([\d.]+)", out, re.M)}
+    return _SIZES[key].get(int(page))
+
+
+def on_page(rect, size):
+    """``rect`` cut to the page: the box SyncTeX gives a float's line is the float's, which a full-page float
+    extends above the page and a wide one past its edge. None when nothing of it is on the page."""
+    if rect is None or size is None:
+        return rect
+    x0, y0 = max(rect["x"], 0.0), max(rect["y"], 0.0)
+    x1, y1 = min(rect["x"] + rect["w"], size[0]), min(rect["y"] + rect["h"], size[1])
+    return dict(x=x0, y=y0, w=x1 - x0, h=y1 - y0) if x1 > x0 and y1 > y0 else None
 
 
 SECTION_RE = re.compile(r"\\(section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}")
@@ -288,7 +313,55 @@ def _fuzzy_line(paper: Path, file, quote, near, reach=200, accept=0.72):
     return best[1] if best[0] >= accept else None
 
 
-def reanchor(paper: Path, pdf: Path, comments, words=None):
+def removed_by(paper: Path, file, quote):
+    """``"hash date subject"`` of the commit that took ``quote``'s words out of ``file``, when the paper is a git
+    repository: tried on windows of six words of its longest plain stretch, since a stretch that crosses a line
+    break of the source is not found whole. None when no window is long enough to be told apart or none is found."""
+    run = max(re.split(r"\\[a-zA-Z]+|[$~{}\\]", quote or ""), key=len).split()
+    windows = [" ".join(run[k:k + 6]) for k in range(0, max(1, len(run) - 5), 3)]
+    for w in [x for x in windows if len(x) >= 24][:6]:
+        try:
+            out = subprocess.run(["git", "log", "-1", "--format=%h %ad %s", "--date=format:%Y-%m-%d %H:%M", "-S", w,
+                                  "--", str(file)], capture_output=True, text=True, timeout=30, cwd=paper).stdout.strip()
+        except Exception:                                    # noqa: BLE001
+            return None
+        if out:
+            return out
+    return None
+
+
+def _elsewhere(paper: Path, c, docs, words_of):
+    """Where a comment's words are when its own file and document no longer hold them: the quote verbatim in another
+    source file, typeset in one of ``docs`` (``[(name, pdf), ...]``), else its letters in another document's PDF.
+    ``(name, page, x, y, rect, file, line)`` or None."""
+    q = c.get("quote") or ""
+    if len(" ".join(q.split())) >= 30:              # long enough not to be a phrase the paper repeats
+        for f in sorted(paper.rglob("*.tex")):
+            rel = str(f.relative_to(paper))
+            try:
+                line = find_quote(paper, rel, q)
+            except LookupError:
+                continue
+            for name, pdf in docs:
+                view = synctex_view(paper, pdf, rel, line)
+                if view:
+                    return (name, view[0], view[1], view[2], view[3], rel, line)
+    probe = _letters(q)
+    if len(probe) >= 24:
+        for name, pdf in docs:
+            if name == (c.get("doc") or docs[0][0]):
+                continue                                     # its own document was searched already
+            words = words_of(name, pdf)
+            for n, w in words.items():
+                hit = next(iter(_PageText(w).hits(probe)), None)
+                if hit:
+                    x, y, rect = _place(w, *hit)
+                    f, line, _ = synctex_edit(paper, pdf, n, x + 1, y)
+                    return (name, n, x, y, rect, f, line)
+    return None
+
+
+def reanchor(paper: Path, pdf: Path, comments, words=None, docs=None):
     """Move every live comment (open or proposed) to where its words are in the PDF built now, and refresh its
     source anchor. Two routes, the source one authoritative where it answers:
 
@@ -299,9 +372,18 @@ def reanchor(paper: Path, pdf: Path, comments, words=None):
       quote is gone, its first or last 24 letters within two pages of there.
 
     The pin goes where the PDF route finds the words, else where the source line is typeset; the anchor is the
-    source route's line, else what SyncTeX says of the new point. A comment neither route finds keeps its place and
-    is marked ``anchor["stale"]``: the words it commented on were rewritten. Returns ``(moved, stale)``."""
+    source route's line, else what SyncTeX says of the new point. A comment neither route finds is looked for in every
+    source file and in the desk's other documents (``docs``, ``[(name, pdf), ...]``), and moves there with its
+    ``doc``; one found nowhere keeps its place and is marked ``anchor["stale"]`` with the time of the build its words
+    were last missing from: they were rewritten or cut. Returns ``(moved, stale)``."""
     words = words or pdf_words(pdf)
+    docs = docs or []
+    loaded = {str(pdf): words}
+
+    def words_of(name, one):
+        if str(one) not in loaded:
+            loaded[str(one)] = pdf_words(one)
+        return loaded[str(one)]
     pages = {n: _PageText(w) for n, w in words.items()}
     moved = stale = 0
 
@@ -339,7 +421,7 @@ def reanchor(paper: Path, pdf: Path, comments, words=None):
             best = nearest(probe, ref_page, ref_y)
             # a source quote: as the page prints it, then its longest stretch of plain words
             chunks = [_letters(x) for x in re.split(r"\$[^$]*\$|\\(?:ref|eqref|cite[pt]?|citealp)\{[^}]*\}", q)]
-            for cand in ([_letters(_detex(q))] + sorted(chunks, key=len, reverse=True)[:1]) if best is None and "\\" in q or "$" in q else []:
+            for cand in ([_letters(_detex(q))] + sorted(chunks, key=len, reverse=True)[:1]) if best is None and ("\\" in q or "$" in q) else []:
                 if best is None and len(cand) >= 12:
                     best = nearest(cand, ref_page, ref_y, within=None if view else 2)
             if best is None and len(probe) >= 40:              # an edited sentence: its opening words, else its source line
@@ -354,9 +436,21 @@ def reanchor(paper: Path, pdf: Path, comments, words=None):
                 target = (n, x, y, rect)
         if target is None and view:
             target = (view[0], view[1], view[2], view[3])
+        if target is None and docs:
+            found = _elsewhere(paper, c, docs, words_of)
+            if found:
+                name, n, x, y, rect, f, ln = found
+                c["doc"], c["page"], c["x_pt"], c["y_pt"] = name, n, x, y
+                c["rect"] = rect
+                a.pop("stale", None)
+                if f is not None:
+                    a.update(file=f, line=ln, **context_of(paper, f, ln))
+                c["anchor"] = a; moved += 1
+                continue
         if target is None:
             if not a.get("stale"):
-                a["stale"] = True; stale += 1
+                a["stale"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(pdf.stat().st_mtime)) if pdf.exists() else True
+                stale += 1
             c["anchor"] = a
             continue
         n, x, y, rect = target

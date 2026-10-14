@@ -319,10 +319,11 @@ function drawPins() {
     const p = pages[c.page]; if (!p || !shown(c) || docOf(c) !== DOC) continue;   // pins belong to the document on show
     let px = c.x_pt;
     if (isAgent(c) && c.rect) { const k = c.page + ":" + Math.round(c.y_pt); fan[k] = (fan[k] || 0) + 1; px = c.rect.x + c.rect.w + 4 + 22 * fan[k]; }
-    if (c.rect) { const m = document.createElement("div"); m.className = "mark" + (isAgent(c) ? " agent" : "");
+    const stale = (c.anchor || {}).stale;                 // its words are gone: no highlight over whatever stands there now
+    if (c.rect && !stale) { const m = document.createElement("div"); m.className = "mark" + (isAgent(c) ? " agent" : "");
       m.style.left = c.rect.x * SCALE + "px"; m.style.top = c.rect.y * SCALE + "px"; m.style.width = c.rect.w * SCALE + "px"; m.style.height = c.rect.h * SCALE + "px"; p.div.appendChild(m); }
     const pin = document.createElement("div"); pin.textContent = c.id;
-    pin.className = "pin" + (c.status === "resolved" || c.status === "dismissed" ? " resolved" : "") + (isAgent(c) ? " agent sev-" + (c.severity || "none") : "") + (c.status === "proposed" ? " proposed" : "");
+    pin.className = "pin" + (c.status === "resolved" || c.status === "dismissed" ? " resolved" : "") + (isAgent(c) ? " agent sev-" + (c.severity || "none") : "") + (c.status === "proposed" ? " proposed" : "") + (stale ? " stale" : "");
     pin.style.left = px * SCALE + "px"; pin.style.top = c.y_pt * SCALE + "px"; pin.title = c.text;
     pin.onclick = (ev) => { ev.stopPropagation(); if (MOBILE) document.body.classList.add("side"); document.getElementById("c" + c.id)?.scrollIntoView({ behavior: "smooth", block: "center" }); };
     p.div.appendChild(pin);
@@ -337,12 +338,13 @@ function renderList() {
   if (hidden) { const h = document.createElement("div"); h.className = "hint"; h.style.display = "block"; h.textContent = `${hidden} resolved hidden`; list.appendChild(h); }
   for (const c of [...comments].sort((a, b) => b.id - a.id)) {
     if (!shown(c)) continue;
-    const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status; d.id = "c" + c.id;
-    const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved` + (a.stale ? " · the words were rewritten since; pin left where they were" : "");
+    const a = c.anchor || {}; const d = document.createElement("div"); d.className = "c " + c.status + (a.stale ? " stale" : ""); d.id = "c" + c.id;
+    const gone = a.stale ? `<div class="gone">its words are no longer in the source${typeof a.stale === "string" ? " (missing since the build of " + escapeHtml(a.stale) + ")" : ""}; the pin is where they were. Resolve it, or reply where its point now applies.</div>` : "";
+    const where = a.file && a.line ? `${a.file}:${a.unit === "paragraph" ? "¶" : ""}${a.line} · ${a.section || ""}${a.float ? " · " + a.float + " " + (a.label || "") : ""}` : `page ${c.page}, unresolved`;
     const docTag = DOCS.length > 1 ? `<span class="tag doc" title="the document this comment is on">${escapeHtml((DOCS.find(x => x.name === docOf(c)) || {}).title || docOf(c))}</span>` : "";
     const tags = isAgent(c) || docTag ? `<div class="tags">` + docTag + (isAgent(c) ? `<span class="tag who">${escapeHtml(c.author)}</span>` + (c.severity ? `<span class="tag sev-${escapeHtml(c.severity)}">${escapeHtml(c.severity)}</span>` : "")
       + (c.category ? `<span class="tag">${escapeHtml(c.category)}</span>` : "") + (c.status !== "open" ? `<span class="tag">${c.status}</span>` : "") : "") + `</div>` : "";
-    d.innerHTML = tags + `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
+    d.innerHTML = tags + `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + gone + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
       `<div>${escapeHtml(c.text)}</div>` + (c.suggestion ? `<div class="suggest"><b>suggested:</b> ${escapeHtml(c.suggestion)}</div>` : "") + `${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
       `<textarea rows="2" placeholder="reply, typed or spoken"></textarea><div class="actions"><button data-a="reply">reply</button>` +
       (c.status === "proposed" ? `<button data-a="accept">accept</button><button data-a="dismiss">dismiss</button>`
