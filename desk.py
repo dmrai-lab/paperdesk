@@ -33,6 +33,14 @@ Whole-paper checks (LaTeX desks):
                                        in [citations] corpus (arXiv ids; their sources are fetched once)
     python desk.py uncited [--top N]   the uncited sentences the field would have cited, by a classifier learnt from
                                        those papers; also written to uncited.json, with each sentence's quote
+    python desk.py check               mechanical consistency: undefined or duplicate labels, unreferenced floats, cite
+                                       keys missing from or unused in the .bib, one work under two keys, a symbol given
+                                       two values, abstract numbers the body never states, near-duplicate claims with
+                                       different numbers, acronyms and spellings; also written to check.json, with
+                                       each float's caption beside the sentences that refer to it
+    python desk.py refcheck            every .bib entry against the record its DOI (doi.org), arXiv id or title (Crossref)
+                                       finds: an unregistered DOI, a work not found, a title, first author or year that
+                                       is not the record's; also written to refcheck.json, placed on the first citing line
     python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
                                        (references identified by DOI, through Crossref when they carry none)
 """
@@ -245,6 +253,21 @@ def main(argv):
                          CONFIG.parent / ".dedup_cache.npz", top, int(opts.get("threads", 8)))
         dedup.save(res, CONFIG.parent / "dedup.json")
         print(dedup.report(res))
+    elif cmd == "check":
+        # mechanical consistency; check.py says what is checked
+        import check
+        found, caps, notes = check.run(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")], CONFIG.parent / "dedup.json")
+        check.save(found, caps, CONFIG.parent / "check.json")
+        print(check.report(found, caps, notes))
+    elif cmd == "refcheck":
+        # the bibliography against the records; refcheck.py says how
+        import check
+        import refcheck
+        log = lambda m: print(m, file=sys.stderr)
+        roots = [d.file for d in DOCS if d.file.endswith(".tex")]
+        found, counts = refcheck.run(PAPER, roots, refcheck.Lookup(CONFIG.parent / ".refcheck.json", log), log)
+        (CONFIG.parent / "refcheck.json").write_text(json.dumps([check.asdict(f) for f in found], indent=1, ensure_ascii=False))
+        print(refcheck.report(found, counts, len(check.bib_entries(check.Paper(PAPER, roots))[1])))
     elif cmd in ("citestats", "uncited", "readinglist"):
         # how the paper cites against its field; citations.py says how
         import citations

@@ -158,6 +158,28 @@ pool); the answers are cached in `.citecorpus/crossref.json`, so the first run t
 seconds. The list, with the field papers citing each work, is written to `readinglist.json`. It is a reading list:
 which of those works the paper should engage with, and where, is the author's call.
 
+## Consistency and the bibliography
+
+Two passes need no model and no corpus:
+
+    python desk.py check      # labels, citations, numbers and terms across the whole paper
+    python desk.py refcheck   # every .bib entry against the record its DOI, arXiv id or title finds
+
+`check` lists what a reader trips on and a build does not always say: a `\ref` no document defines (a supplement's
+labels count only where `\externaldocument` loads them), a label defined twice, a figure or table the text never
+mentions; a cited key no `.bib` holds, an entry nothing cites, a key defined twice, one work under two keys; a symbol
+given two or three values in inline maths, a number of the abstract the rest of the paper never states in that unit
+and to that rounding (numbers written as words count: "one percent" is 1%), the near-duplicate claims of
+`dedup.json` whose sides state different numbers; an acronym defined twice in the body, used before its definition
+or never after it, and words spelt two ways. Each finding names a place and a quote for `desk.py add`; all of it is
+recall for a reader to judge. `check.json` also holds every float's caption beside the sentences that refer to it,
+for the comparison no rule makes. Run `dedup` first for the duplicate numbers.
+
+`refcheck` asks doi.org (Crossref, DataCite and the other agencies alike) what each DOI is, arXiv what each arXiv id
+is, and Crossref, then arXiv, for an entry with neither, by its title. It reports an unregistered DOI, a work found
+nowhere, and a title, first author or year that is not the record's, each on the first line that cites the entry.
+Only the bibliography's own metadata goes out; answers are cached in `.refcheck.json`.
+
 ## A Word document
 
 Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does

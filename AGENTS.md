@@ -34,6 +34,18 @@ You are the editor of the document this desk serves; the reviewer comments on th
    method, a review, the dataset's paper, the tool's paper), and in `--suggest` a reference only when you know it
    exists: the author reads at least its abstract before it is cited. `python desk.py readinglist` lists the works
    the field cites most that the paper does not; report it to the author as a reading list, never as citations to add.
+8. Asked for consistency: run `python desk.py dedup`, then `python desk.py check`. Post the cross-reference and
+   citation findings as they are (`--category consistency`; an undefined reference or a missing key `major`), except
+   the ones on a `.bib`, which have no quote: list those to the author. A symbol with two values or two near-duplicate
+   claims with different numbers is a finding only when both places speak of the same quantity in the same
+   experiment; then say which value the rest of the paper supports. A spelling pair is worth a comment for a name or a
+   term of art (Monte Carlo, Monte-Carlo), not for a compound hyphenated before its noun and open after it. Then read
+   the abstract against the results, and each caption in `check.json` against the sentences that refer to it: a
+   number, a direction of effect or a claim that one states and the other contradicts or does not support is `major`.
+9. Asked to check the references: `python desk.py refcheck`. An unregistered DOI or an article found nowhere is
+   `major` (`--category reference`): find the right DOI or the real work, and never invent one. A title, author or year
+   that disagrees: look at the record, then say which side is wrong; a book's other edition or a paper's online year is
+   a note, not an error.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in

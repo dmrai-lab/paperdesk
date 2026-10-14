@@ -33,6 +33,7 @@ class Ref:
     text: str                # authors, title, venue, year as plain text
     doi: str = None
     title: str = None        # when the record names it (a .bib or biblatex entry)
+    fields: dict = None      # a .bib entry's fields as written, with its type as ``entrytype``
 
 
 @dataclass
@@ -50,6 +51,9 @@ def _doi(s):
 
 
 def _plain(s):
+    s = re.sub(r"\\[\"'`^~=.uvHckbdrt]\s*\{?([A-Za-z])\}?", r"\1", s)       # accents: {\"o} and \v{S} as the letter
+    for _ in range(2):
+        s = re.sub(r"(?<![A-Za-z\\])\{([^{}]*)\}", r"\1", s)           # {B}rownian: a group kept from case changes
     s = re.sub(r"\\(?:newblock|penalty0|bibinfo\{[^}]*\}|natexlab\{[^}]*\})", " ", s)
     s = re.sub(r"\\(?:url|doi|href)\{[^}]*\}(\{[^}]*\})?", " ", s)
     return prose.clean(s)
@@ -118,7 +122,8 @@ def _bibfile(text):
         fam = [a.split(",")[0].strip() if "," in a else (a.split() or [""])[-1] for a in authors if a.strip()]
         venue = _plain(fields.get("journal", fields.get("booktitle", "")))
         text_ = ", ".join(_plain(x) for x in fam[:6]) + ". " + title + ". " + venue + " " + fields.get("year", "")
-        out[m.group(2)] = Ref(m.group(2), text_.strip(), _doi(fields.get("doi", "")), title or None)
+        out[m.group(2)] = Ref(m.group(2), text_.strip(), _doi(fields.get("doi", "")), title or None,
+                              dict(fields, entrytype=m.group(1).lower()))
 
 
 def cited_refs(folder: Path, roots):

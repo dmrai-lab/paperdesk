@@ -34,6 +34,7 @@ class Sentence:
     cites: tuple = ()   # the citation keys in it
     section: str = ""   # the title of the \\section it stands in ("" before the first)
     appendix: bool = False
+    src: str = ""       # its source with comments and displays blanked, inline maths kept (where numbers are read)
 
 
 def tree(paper: Path, roots):
@@ -137,7 +138,7 @@ def _sentences(paper: Path, file):
             if len(q.split()) < 3:
                 continue
             cites = tuple(k.strip() for m in CITE_RE.finditer(uncommented[s:e]) for k in m.group(1).split(",") if k.strip())
-            out.append((s, Sentence(file, raw.count("\n", 0, s) + 1, para, len(out), text, q, cites)))
+            out.append((s, Sentence(file, raw.count("\n", 0, s) + 1, para, len(out), text, q, cites, src=masked[s:e])))
     return out
 
 
