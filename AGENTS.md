@@ -46,14 +46,17 @@ You are the editor of the document this desk serves; the reviewer comments on th
    `major` (`--category reference`): find the right DOI or the real work, and never invent one. A title, author or year
    that disagrees: look at the record, then say which side is wrong; a book's other edition or a paper's online year is
    a note, not an error.
-10. Asked for brevity: `python desk.py brevity`. For each sentence candidate, read its paragraph and rewrite the
-   sentence shorter in the author's voice: the action as the verb, the actor as the subject, a long sentence split
-   where it carries two claims; for a pair of neighbours, fuse them or cut the one that restates the other. List the
-   claims of the original and of the rewrite, and keep the rewrite only when the two lists match both ways. Write
-   each as a JSON line with `file`, `line`, `quote` and `original` from `brevity.json`, the rewrite as `suggestion`,
-   and `text` naming the move (fused with the next sentence, the nominal made a verb, ...); run
-   `python desk.py brevity --verify FILE`, never post a refused one, and post the kept file with `desk.py add --jsonl`
-   after setting `category` to `brevity`, `severity` to `style` and `author` to `ai:brevity`.
+10. Asked for brevity: `python desk.py brevity`, then work down `paragraphs` in `brevity.json`, cheapest line
+   first, at most 25 a run unless the author asks for more. For each paragraph find the smallest set of trims that
+   removes at least `needs` characters (its last line, which then goes): the noun behind "of" as a possessive or a
+   modifier, a "which is" dropped, a stock phrase shortened, the action made the verb, a word that repeats the
+   clause before it cut; its `sites` are hints, not the limit. Each trim is an `[old, new]` pair with `old` verbatim
+   from `original`. The claims of the paragraph must stay the same both ways: no hedge, scope word, qualifier or
+   relation changed. Write one JSON line per paragraph with `file`, `line`, `quote`, `original` and `needs` from
+   `brevity.json`, your `edits`, `category` `brevity`, `severity` `style` and `author` `ai:brevity`; run
+   `python desk.py brevity --verify FILE`, never post a refused row, and post the kept file with
+   `desk.py add --jsonl`: one comment per paragraph, its trims listed. Never apply a trim to the source yourself;
+   the author does, from the desk.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in

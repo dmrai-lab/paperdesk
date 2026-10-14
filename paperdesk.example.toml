@@ -44,3 +44,4 @@ glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, 
 # conclusion, appendix); the neighbour comparison uses [dedup] model and threads
 # [brevity]
 # budget = {introduction = 1200, results = 4000, discussion = 1200}
+# lines_per_page = 46                 # otherwise measured from the PDF

@@ -13,19 +13,30 @@ def sent(text, para=1, index=0, section="Results", file="r.tex"):
     return prose.Sentence(file, index + 1, para, index, text, " ".join(text.split()[:5]), (), section, False, text)
 
 
-def test_patterns():
-    hits = lambda t: [n for n, _ in brevity.patterns(sent(t))]
-    assert "of-chain" in hits("We report the colour of the cat of the neighbour today.")
-    assert "weak-verb" in hits("We perform an evaluation of the error on every substrate.")
-    assert "be-adjective" in hits("The floor is dependent on the walker count of the pack.")
-    assert "delayed-subject" in hits("There are walkers that never touch a wall in the box.")
-    assert "throat-clearing" in hits("It is worth noting that the walk is stored in order to replay it.")
-    assert "redundant" in hits("Each and every walker is stored once in the pack.")
-    assert "agent-passive" in hits("The signal is computed by the engine at replay time.")
-    assert "hedge-stack" in hits("This may possibly suggest a bias in the floor.")
-    assert "signpost" in hits("In this section we show the floor of every pack.")
-    assert hits("Replay answers every acquisition by an inner product.") == []
-    assert hits(" ".join(["word"] * brevity.LONG)) == ["long"]
+def test_sites():
+    names = lambda t: [x.name for x in brevity.sites([sent(t)])]
+    assert "of-the" in names("We report the colour of the cat today.")
+    assert "all-of-the" in names("All of the walkers are stored once.")
+    assert "whiz" in names("The walkers that are near the wall reflect.")
+    assert "weak-verb" in names("We perform an evaluation of the error on every substrate.")
+    assert "nominal" in names("The estimation of the floor takes a minute.")
+    assert "be-adjective" in names("The floor is dependent on the walker count of the pack.")
+    assert "delayed-subject" in names("There are walkers that never touch a wall in the box.")
+    assert "stock" in names("The walk is stored in order to replay it later.")
+    assert "agent-passive" in names("The signal is computed by the engine at replay time.")
+    assert "hedge-stack" in names("This may possibly suggest a bias in the floor.")
+    assert "signpost" in names("In this section the floor of every pack is shown.")
+    assert names("Replay answers every acquisition by an inner product.") == []
+    assert brevity.long_sentences([sent(" ".join(["word"] * brevity.LONG))])
+
+
+def test_paragraph_of_and_prose_lines():
+    s = [sent("a b c d e f", 1, 0), sent("g h i j k l", 1, 1), sent("m n o p q r", 2, 2)]
+    s[0].line, s[1].line, s[2].line = 10, 12, 20
+    s[1].src = "g h i\nj k l"
+    find = brevity._paragraph_of(s)
+    assert find("r.tex", 13) == ("r.tex", 1) and find("r.tex", 15) is None and find("r.tex", 20) == ("r.tex", 2)
+    assert brevity._prose_like("encoded (Sec. 3.3).") and not brevity._prose_like("w = −") and not brevity._prose_like("| {z }")
 
 
 def test_neighbours_and_summaries():
@@ -51,8 +62,21 @@ def test_gate():
     assert brevity.gate(orig, good) == []
     bad = r"The pack's $K=256$ modes at 1.3~kHz reach the signal for each scanner \citep{Fick2026}, as the walk requires."
     lost = " | ".join(brevity.gate(orig, bad))
-    for word in ("cross-references", "1.28", "negation dropped: not", "only", "every", "at most", "emphasised"):
+    for word in ("cross-references", "1.28", "negation dropped (1 in the original, 0", "only", "every", "at most", "emphasised"):
         assert word in lost, word
     assert any("not shorter" in x for x in brevity.gate("Two short words here now.", "Two short words here now, again."))
+    assert brevity.gate("Neither engine has explained it, nor has the theory.", "Not yet explained by either engine or theory.") == []
     kept, dropped = brevity.verify([dict(original=orig, suggestion=good), dict(original=orig, suggestion=bad)])
     assert len(kept) == 1 and kept[0]["saved"] > 0 and len(dropped) == 1 and dropped[0]["lost"]
+
+
+def test_verify_edits():
+    orig = r"The colour of the cat is measured in order to compare it with the colour of the dog (Fig.~\ref{fig:cat})."
+    row = dict(original=orig, needs=12, edits=[["The colour of the cat", "The cat's colour"], ["in order to", "to"]])
+    [k], [] = brevity.verify([row])
+    assert k["saved"] > 12 and "'in order to' → 'to'" in k["text"] and "the last line holds 12" in k["text"]
+    assert "suggestion" not in k
+    [], [d] = brevity.verify([dict(original=orig, edits=[["the colour of a cat", "x"]])])
+    assert "not in the source" in d["lost"][0]
+    [], [d] = brevity.verify([dict(original=orig, edits=[[r" (Fig.~\ref{fig:cat})", ""]])])
+    assert "cross-reference" in d["lost"][0]

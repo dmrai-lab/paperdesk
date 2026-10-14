@@ -182,23 +182,24 @@ Only the bibliography's own metadata goes out; answers are cached in `.refcheck.
 
 ## Brevity
 
-    python desk.py brevity                       # where the paper could say the same in fewer words
-    python desk.py brevity --verify rewrites.jsonl   # what a proposed shorter version would lose
+    python desk.py brevity                           # where the paper could say the same in fewer words, and what it buys
+    python desk.py brevity --verify trims.jsonl      # what each proposed trim would lose
 
-`brevity` ranks the sentences by the patterns of Lanham's Paramedic Method, as proselint, write-good and Vale encode
-them: chains of "of" (the colour of the cat), a noun made of a verb behind a weak verb (perform an evaluation of),
-openers that delay the subject, throat-clearing (in order to), redundant pairs, passives that name their agent,
-stacked hedges, signposting, and sentences of 40 words or more. It ranks the adjacent sentences of each paragraph by
-how alike they are (a sentence restating its neighbour, a paragraph's end summing up its start: the pairs `dedup`
-skips) and counts the words per section, against `[brevity] budget` when set. `brevity.json` carries each
-candidate's source.
+`brevity` works at the scale of the page. It traces every line of the built PDFs to its source with SyncTeX and
+reports how many pages each document's prose takes (the rest being figures, tables, displays and references), the
+lines of prose per section, and every paragraph's last line: a paragraph loses that line to a trim of as many
+characters anywhere in it, so the paragraphs are ranked by that cost, cheapest line first. Beside each it lists
+the sites in the paragraph a copy-editor would cut a word or three: the noun behind "of" (the colour of the cat),
+"all of the", a relative clause that only carries "is", an opener that delays the subject, stock phrases with a short
+form (in order to, is given by, in the case of), a weak verb before a noun made of a verb, signposting, stacked hedges,
+passives that name their agent. Sentences of 40 words or more, and neighbours that read alike, are listed too.
 
-The rewriting is an agent's, with the paragraph in view. `--verify` is the gate it passes before anything is posted:
-a rewrite is refused when it drops a citation, a cross-reference, a number or its unit, inline maths, an emphasised
-term, a negation, or a quantifier or hedge (only, every, at most, approximately, may), or when it is not shorter.
-The rewrites that pass are written to `rewrites.kept.jsonl` with the words each saves, ready for `desk.py add --jsonl`.
-Whether the claims are the same both ways is still the agent's judgement; the gate catches what a shortening drops
-without noticing.
+The trims are an agent's: for a paragraph it proposes `[old, new]` pairs, each `old` verbatim from the source, that
+remove at least the characters of the last line. `--verify` applies them and refuses the paragraph when the result
+drops a citation, a cross-reference, a number or its unit, inline maths, an emphasised term, a negation, or a
+quantifier or hedge (only, every, at most, approximately, may), or is not shorter. What passes becomes one comment
+per paragraph listing its trims, so a run of 25 paragraphs is 25 comments and about 25 lines. Nothing is applied to
+the source: the author takes the trims they agree with.
 
 ## A Word document
 

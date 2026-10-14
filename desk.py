@@ -41,13 +41,14 @@ Whole-paper checks (LaTeX desks):
     python desk.py refcheck            every .bib entry against the record its DOI (doi.org), arXiv id or title (Crossref)
                                        finds: an unregistered DOI, a work not found, a title, first author or year that
                                        is not the record's; also written to refcheck.json, placed on the first citing line
-    python desk.py brevity [--top N]   the sentences with the most to cut (Paramedic patterns: chains of 'of', weak
-                                       verbs, throat-clearing, ...), the neighbours that restate each other, and the
-                                       words per section ([brevity] budget); also written to brevity.json, with each
-                                       sentence's source
-    python desk.py brevity --verify F.jsonl   proposed rewrites ("original", "suggestion") through the gate: what a
-                                       rewrite drops (citations, references, numbers, maths, negations, quantifiers,
-                                       hedges) refuses it; the rest go to F.kept.jsonl with the words each saves
+    python desk.py brevity [--top N]   every site a word or three could go (the colour of the cat, which is, in order
+                                       to, ...), the paragraphs whose short last line those sites would pull up (from
+                                       the built PDF), and the lines of text per section; all in brevity.json, one
+                                       entry per paragraph with its source and sites
+    python desk.py brevity --verify F.jsonl   proposed shortenings through the gate: a row's "edits" ([old, new] pairs,
+                                       old verbatim) or "suggestion" against its "original"; what drops a citation,
+                                       reference, number, maths, negation, quantifier or hedge is refused; the rest go
+                                       to F.kept.jsonl, one comment per paragraph listing its edits
     python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
                                        (references identified by DOI, through Crossref when they carry none)
 """
@@ -282,19 +283,24 @@ def main(argv):
             return
         import dedup
         import prose
-        top = int(_opt(argv, "--top") or 60)
+        top = int(_opt(argv, "--top") or 20)
         opts = _CFG.get("brevity", {}); dopts = _CFG.get("dedup", {})
         sents = prose.paper_sentences(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")])
         try:
             emb = dedup.embed([s.text for s in sents], dopts.get("model", dedup.MODEL), CONFIG.parent / ".brevity_cache.npz",
                               int(dopts.get("threads", 8)))
-            pairs = brevity.neighbour_candidates(sents, emb, top // 2)
+            pairs = brevity.neighbour_candidates(sents, emb, 30)
         except SystemExit as e:
             print(f"neighbours not compared: {e}", file=sys.stderr); pairs = []
-        cands = brevity.sentence_candidates(sents, top)
-        counts = brevity.words_per_section(sents, opts.get("budget"))
-        (CONFIG.parent / "brevity.json").write_text(json.dumps(brevity.to_json(cands, pairs, counts), indent=1, ensure_ascii=False))
-        print(brevity.report(cands, pairs, counts))
+        found = brevity.sites(sents)
+        holes, (lines, per_page, pages) = brevity.overhangs(PAPER, [(d.name, d.pdf) for d in DOCS if d.file.endswith(".tex")], sents)
+        paras = brevity.paragraphs(sents, found, holes)
+        lines_by = brevity.budget(sents, lines)
+        words = brevity.words_per_section(sents, opts.get("budget"))
+        longs = brevity.long_sentences(sents)
+        (CONFIG.parent / "brevity.json").write_text(json.dumps(brevity.to_json(paras, found, longs, pairs, lines_by, words),
+                                                               indent=1, ensure_ascii=False))
+        print(brevity.report(paras, found, longs, pairs, lines_by, words, opts.get("lines_per_page") or per_page, pages, top))
     elif cmd == "refcheck":
         # the bibliography against the records; refcheck.py says how
         import check
