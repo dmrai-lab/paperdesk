@@ -209,6 +209,14 @@ number or its unit, inline maths or an emphasised term, or is not shorter. A neg
 independent agent, the checker, which keeps an edit only when it reads at least as well and says the same, and keeps
 a flagged one only when the dropped word was redundant.
 
+Posted with `desk.py add --jsonl` (rows carrying `edits`), a paragraph's shortening is one card whose edits are
+decided one by one on the page: each shows the old words struck in red and the new ones in blue, word by word, with
+a ✓ and a ✗ (a second click undoes), and "✓ rest" / "✗ rest" decide the undecided ones together. Undecided
+shortenings live under the "shortenings" filter, so a hundred of them never bury the comments; one with an accepted
+edit is open work like any accepted comment, and one whose every edit is rejected is dismissed. The editor applies
+what the author accepted with `desk.py apply ID`: exactly those edits, each where its words stand in the source, each
+marked applied; `desk.py watch` says when there is something to apply.
+
 `--measure` copies what the build reads (the `.fls` inputs and the bibliographies) into scratch folders beside the
 config, applies every kept edit there, and builds each document as it stands, trimmed, and marked: the cut words in
 red brackets and the new ones in blue, to read like tracked changes. It prints the pages each way. Nothing is ever

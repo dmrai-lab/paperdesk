@@ -309,8 +309,41 @@ let who = "all"; try { who = localStorage.getItem("paperdesk.who") || "all"; } c
 whoSel.value = who;
 whoSel.onchange = () => { who = whoSel.value; try { localStorage.setItem("paperdesk.who", who); } catch (e) {} drawPins(); renderList(); };
 const isAgent = (c) => !!c.author && c.author !== WHO.reviewer;
+const isEdits = (c) => Array.isArray(c.edits) && c.edits.length > 0;   // a shortening, decided edit by edit
+// shortenings waiting for a decision live under their own filter, so a hundred of them never bury the comments
 const shown = (c) => !(hideResolved && (c.status === "resolved" || c.status === "dismissed"))
-  && (who === "all" || (who === "mine" && !isAgent(c)) || (who === "agents" && isAgent(c)) || (who === "proposed" && c.status === "proposed"));
+  && (who === "edits" ? isEdits(c) : !(isEdits(c) && c.status === "proposed"))
+  && (who === "all" || who === "edits" || (who === "mine" && !isAgent(c)) || (who === "agents" && isAgent(c)) || (who === "proposed" && c.status === "proposed"));
+
+function wordDiff(a, b) {                                 // the words kept plain, the cut ones struck, the new ones blue
+  const x = a.split(/\s+/).filter(Boolean), y = b.split(/\s+/).filter(Boolean);
+  const L = Array.from({ length: x.length + 1 }, () => new Array(y.length + 1).fill(0));
+  for (let i = x.length - 1; i >= 0; i--) for (let j = y.length - 1; j >= 0; j--)
+    L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  const put = (cls, w) => { const last = out[out.length - 1]; if (last && last[0] === cls) last[1].push(w); else out.push([cls, [w]]); };
+  while (i < x.length || j < y.length) {
+    if (i < x.length && j < y.length && x[i] === y[j]) { put("", x[i]); i++; j++; }
+    else if (j < y.length && (i >= x.length || L[i][j + 1] >= L[i + 1][j])) { put("ins", y[j]); j++; }
+    else { put("del", x[i]); i++; }
+  }
+  return out.map(([cls, ws]) => cls ? `<span class="${cls}">${escapeHtml(ws.join(" "))}</span>` : escapeHtml(ws.join(" "))).join(" ");
+}
+
+function editsHtml(c) {
+  const st = c.edit_state || []; const flat = (s) => escapeHtml((s || "").replace(/\s+/g, " ").trim());
+  const flags = Object.fromEntries((c.flags || []).map(([o, f]) => [o, f.join("; ")]));
+  const n = (s) => st.filter(x => x === s).length;
+  return (c.note ? `<div>${escapeHtml(c.note)}</div>` : "")
+    + `<div class="where">${c.edits.length} edits${c.saved ? ", " + c.saved + " characters fewer" : ""} · ${n("accept") + n("applied")} accepted, ${n("reject")} rejected${n("applied") ? ", " + n("applied") + " applied" : ""}</div>`
+    + c.edits.map(([o, w], k) => {
+      const s = st[k] || "";
+      return `<div class="edit ${s}" data-k="${k}">` + (w.trim() ? wordDiff(o, w) : `<span class="del">${flat(o)}</span> <i>(cut)</i>`)
+        + (flags[o] ? ` <span class="flag" title="${escapeHtml(flags[o])}: the checker kept it">⚑</span>` : "")
+        + (s === "applied" ? ` <span class="tag">applied</span>`
+          : ` <span class="eb"><button data-e="accept" title="take this edit">✓</button><button data-e="reject" title="leave the text as it is">✗</button></span>`) + `</div>`;
+    }).join("");
+}
 
 function drawPins() {
   for (const n in pages) { pages[n].div.querySelectorAll(".pin, .mark").forEach(x => x.remove()); }
@@ -345,12 +378,18 @@ function renderList() {
     const tags = isAgent(c) || docTag ? `<div class="tags">` + docTag + (isAgent(c) ? `<span class="tag who">${escapeHtml(c.author)}</span>` + (c.severity ? `<span class="tag sev-${escapeHtml(c.severity)}">${escapeHtml(c.severity)}</span>` : "")
       + (c.category ? `<span class="tag">${escapeHtml(c.category)}</span>` : "") + (c.status !== "open" ? `<span class="tag">${c.status}</span>` : "") : "") + `</div>` : "";
     d.innerHTML = tags + `<div class="where">#${c.id} · ${c.created} · ${escapeHtml(where)}</div>` + gone + (c.quote ? `<div class="quote">${escapeHtml(c.quote.slice(0, 220))}</div>` : "") +
-      `<div>${escapeHtml(c.text)}</div>` + (c.suggestion ? `<div class="suggest"><b>suggested:</b> ${escapeHtml(c.suggestion)}</div>` : "") + `${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
+      (isEdits(c) ? editsHtml(c) : `<div>${escapeHtml(c.text)}</div>`) + (c.suggestion ? `<div class="suggest"><b>suggested:</b> ${escapeHtml(c.suggestion)}</div>` : "") + `${audioHtml(c)}` + (c.replies || []).map(r => `<div class="reply ${r.author === WHO.editor ? "claude" : ""}"><b>${r.author}</b> · ${r.created}<br>${escapeHtml(r.text)}${audioHtml(r)}</div>`).join("") +
       `<textarea rows="2" placeholder="reply, typed or spoken"></textarea><div class="actions"><button data-a="reply">reply</button>` +
-      (c.status === "proposed" ? `<button data-a="accept">accept</button><button data-a="dismiss">dismiss</button>`
+      (isEdits(c) && c.status !== "resolved" ? `<button data-a="acceptall" title="take every undecided edit">✓ rest</button><button data-a="rejectall" title="leave every undecided edit">✗ rest</button>` : "") +
+      (isEdits(c) && c.status !== "resolved" ? "" : c.status === "proposed" ? `<button data-a="accept">accept</button><button data-a="dismiss">dismiss</button>`
         : c.status === "open" ? `<button data-a="resolve">resolve</button>` : `<button data-a="reopen">reopen</button>`) + `<button data-a="goto">go to</button><button data-a="delete">delete</button></div>`;
     const ta = d.querySelector("textarea"); let blob = null;
     d.querySelector(".actions").prepend(micButton(ta, (b) => { blob = b; }));
+    d.querySelectorAll("button[data-e]").forEach(b => b.onclick = async () => {   // one edit: taken, left, or undecided again
+      const k = +b.closest(".edit").dataset.k, cur = (c.edit_state || [])[k];
+      await api(`/api/comments/${c.id}/edit`, { method: "POST", body: JSON.stringify({ k, state: cur === b.dataset.e ? null : b.dataset.e, author: WHO.reviewer }) });
+      await refresh();
+    });
     d.querySelectorAll("button[data-a]").forEach(b => b.onclick = async () => {
       const act = b.dataset.a;
       if (act === "goto" && docOf(c) !== DOC) await switchDoc(docOf(c));   // a comment on the other document: its tab first
@@ -358,6 +397,10 @@ function renderList() {
       if (act === "goto") { if (MOBILE) document.body.classList.remove("side"); const vr = viewer.getBoundingClientRect(), pr = pages[c.page].div.getBoundingClientRect();
         viewer.scrollTo({ top: viewer.scrollTop + (pr.top - vr.top) + c.y_pt * SCALE - 120, behavior: "smooth" }); return; }
       if (act === "delete" && !confirm("delete comment #" + c.id + "?")) return;
+      if (act === "acceptall" || act === "rejectall") {
+        await api(`/api/comments/${c.id}/edit`, { method: "POST", body: JSON.stringify({ k: "all", state: act === "acceptall" ? "accept" : "reject", author: WHO.reviewer }) });
+        await refresh(); return;
+      }
       if (act === "reply") {
         const text = ta.value.trim(); if (!text && !blob) return;
         if (blob) { const r = await postVoice(blob, { reply_to: c.id, author: WHO.reviewer, dictation: text }); if (r && r.warning) alert("paperdesk: " + r.warning); }
@@ -391,6 +434,8 @@ async function refresh() {
   const j = JSON.stringify(comments) + "|" + DOC + "|" + DOCS.map(d => d.name).join(",");
   if (j !== lastJson && !rec) { lastJson = j; renderTabs(); renderList(); drawPins(); }   // never rebuild the list mid-recording
   document.getElementById("toggle").textContent = `comments (${st.n_open})`;
+  const todo = comments.filter(c => isEdits(c) && c.status === "proposed").length;
+  whoSel.querySelector('option[value="edits"]').textContent = todo ? `shortenings (${todo} to decide)` : "shortenings";
 }
 
 const themeBtn = document.getElementById("theme");               // night mode: remembered per browser

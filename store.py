@@ -39,3 +39,20 @@ def locked(store: Path):
 
 def next_id(items):
     return 1 + max([c["id"] for c in items], default=0)
+
+
+def decide(c, k, state, who):
+    """Edit ``k`` of a shortening (every undecided one when ``k`` is "all") accepted, rejected or undecided again
+    (``state`` "accept", "reject" or None; an applied edit stays applied). The comment is open work once any edit is
+    accepted, dismissed once every edit is rejected, and proposed while none is decided."""
+    st = c.setdefault("edit_state", [None] * len(c.get("edits") or []))
+    for i in (range(len(st)) if k == "all" else [int(k)]):
+        if st[i] != "applied" and (k != "all" or st[i] is None):
+            st[i] = state if state in ("accept", "reject") else None
+    if any(s in ("accept", "applied") for s in st):
+        if c["status"] in ("proposed", "dismissed"):
+            c["status"] = "open"; c["accepted_by"] = who
+    elif st and all(s == "reject" for s in st):
+        c["status"] = "dismissed"
+    elif c["status"] in ("open", "dismissed") and not any(st):
+        c["status"] = "proposed"; c.pop("accepted_by", None)
