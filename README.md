@@ -193,6 +193,8 @@ Only the bibliography's own metadata goes out; answers are cached in `.refcheck.
     python desk.py brevity                               # every paragraph, with what the page layout and patterns say
     python desk.py brevity --verify trims.jsonl [--flag] # what each proposed shortening would lose
     python desk.py brevity --measure trims.kept.jsonl    # the paper built with them: pages, and a marked copy
+    python desk.py brevity --blind trims.kept.jsonl checked.jsonl --pass NAME   # what to post, a blind sample among it
+    python desk.py decisions [--export decided.jsonl]    # what the author made of every shortening so far
 
 `brevity` lists every paragraph of the paper in reading order as a candidate, with its section and word count. Beside
 each it gives hints: the sites a copy-editor would cut a word or three (the noun behind "of", "all of the", a relative
@@ -216,6 +218,20 @@ shortenings live under the "shortenings" filter, so a hundred of them never bury
 edit is open work like any accepted comment, and one whose every edit is rejected is dismissed. The editor applies
 what the author accepted with `desk.py apply ID`: exactly those edits, each where its words stand in the source, each
 marked applied; `desk.py watch` says when there is something to apply.
+
+Each decision is a lesson for the next pass, so the page asks for a little more than yes or no, all of it optional: a
+rejected edit offers its reasons (changes meaning, reads worse, too terse, loses emphasis, not my voice), and ✎ takes
+an edit in the author's own words, which is what `apply` then writes. Every decision is appended to `decisions.jsonl`
+beside the comments, never rewritten: the paragraph as it stood, the edit, what the pipeline knew of it, the decision,
+whether it was made edit by edit or with "rest", the reason and the wording. An edit applied and later undone in the
+source by hand is a rejection the page never saw: `desk.py decisions` finds those first and logs them, then counts
+the checker's verdicts against the author's; `--export` writes the latest decision on each edit, the dataset a later
+pass learns from.
+
+A checker that drops a good edit is invisible when only its kept edits reach the author. `--blind` posts them with,
+unmarked among them, a random sample of the edits it dropped (`--share`, a tenth of what is posted by default), each
+edit's verdict kept in `edit_meta`, which the page never receives; the author's decisions on those say whether the
+checker is too strict.
 
 `--measure` copies what the build reads (the `.fls` inputs and the bibliographies) into scratch folders beside the
 config, applies every kept edit there, and builds each document as it stands, trimmed, and marked: the cut words in

@@ -330,18 +330,23 @@ function wordDiff(a, b) {                                 // the words kept plai
   return out.map(([cls, ws]) => cls ? `<span class="${cls}">${escapeHtml(ws.join(" "))}</span>` : escapeHtml(ws.join(" "))).join(" ");
 }
 
+let rewording = false;                                    // an edit open for the author's own words: the list stays put
+const REASONS = ["changes meaning", "reads worse", "too terse", "loses emphasis", "not my voice"];   // why an edit was left
 function editsHtml(c) {
-  const st = c.edit_state || []; const flat = (s) => escapeHtml((s || "").replace(/\s+/g, " ").trim());
+  const st = c.edit_state || [], why = c.edit_reason || [], mine = c.edit_new || []; const flat = (s) => escapeHtml((s || "").replace(/\s+/g, " ").trim());
   const flags = Object.fromEntries((c.flags || []).map(([o, f]) => [o, f.join("; ")]));
   const n = (s) => st.filter(x => x === s).length;
   return (c.note ? `<div>${escapeHtml(c.note)}</div>` : "")
     + `<div class="where">${c.edits.length} edits${c.saved ? ", " + c.saved + " characters fewer" : ""} · ${n("accept") + n("applied")} accepted, ${n("reject")} rejected${n("applied") ? ", " + n("applied") + " applied" : ""}</div>`
     + c.edits.map(([o, w], k) => {
-      const s = st[k] || "";
-      return `<div class="edit ${s}" data-k="${k}">` + (w.trim() ? wordDiff(o, w) : `<span class="del">${flat(o)}</span> <i>(cut)</i>`)
-        + (flags[o] ? ` <span class="flag" title="${escapeHtml(flags[o])}: the checker kept it">⚑</span>` : "")
+      const s = st[k] || "", nw = mine[k] || w;            // the author's own wording, when they rewrote the edit
+      return `<div class="edit ${s}" data-k="${k}">` + (nw.trim() ? wordDiff(o, nw) : `<span class="del">${flat(o)}</span> <i>(cut)</i>`)
+        + (mine[k] ? ` <span class="tag">your wording</span>` : "")
+        + (flags[o] ? ` <span class="flag" title="${escapeHtml(flags[o])}: check that the word was redundant">⚑</span>` : "")
         + (s === "applied" ? ` <span class="tag">applied</span>`
-          : ` <span class="eb"><button data-e="accept" title="take this edit">✓</button><button data-e="reject" title="leave the text as it is">✗</button></span>`) + `</div>`;
+          : ` <span class="eb"><button data-e="accept" title="take this edit">✓</button><button data-e="reject" title="leave the text as it is">✗</button><button data-w title="take it in your own words">✎</button></span>`)
+        + (s === "reject" ? `<div class="why">` + REASONS.map(r => `<button data-r="${r}" class="${why[k] === r ? "on" : ""}">${r}</button>`).join("") + `</div>` : "")
+        + `</div>`;
     }).join("");
 }
 
@@ -390,6 +395,23 @@ function renderList() {
       await api(`/api/comments/${c.id}/edit`, { method: "POST", body: JSON.stringify({ k, state: cur === b.dataset.e ? null : b.dataset.e, author: WHO.reviewer }) });
       await refresh();
     });
+    d.querySelectorAll("button[data-r]").forEach(b => b.onclick = async () => {   // why an edit was left, optional
+      const k = +b.closest(".edit").dataset.k, cur = (c.edit_reason || [])[k];
+      await api(`/api/comments/${c.id}/edit`, { method: "POST", body: JSON.stringify({ k, state: "reject", reason: cur === b.dataset.r ? null : b.dataset.r, author: WHO.reviewer }) });
+      await refresh();
+    });
+    d.querySelectorAll("button[data-w]").forEach(b => b.onclick = () => {         // the edit taken in the author's words
+      const box = b.closest(".edit"), k = +box.dataset.k, [o, w] = c.edits[k];
+      const flat = (x) => (x || "").replace(/\s+/g, " ").trim();
+      box.innerHTML = `<div class="where">replace: ${escapeHtml(flat(o))}</div><textarea rows="3"></textarea>`
+        + `<div class="eb"><button data-save>take it</button><button data-cancel>cancel</button></div>`;
+      const t = box.querySelector("textarea"); t.value = flat((c.edit_new || [])[k] || w); t.focus(); rewording = true;
+      box.querySelector("[data-cancel]").onclick = () => { rewording = false; renderList(); };
+      box.querySelector("[data-save]").onclick = async () => { rewording = false;
+        await api(`/api/comments/${c.id}/edit`, { method: "POST", body: JSON.stringify({ k, state: "accept", new: t.value, author: WHO.reviewer }) });
+        await refresh();
+      };
+    });
     d.querySelectorAll("button[data-a]").forEach(b => b.onclick = async () => {
       const act = b.dataset.a;
       if (act === "goto" && docOf(c) !== DOC) await switchDoc(docOf(c));   // a comment on the other document: its tab first
@@ -432,7 +454,7 @@ async function refresh() {
   if (pdfMtime !== null && mt !== pdfMtime && !st.build.running) { pdfMtime = mt; await loadPdf(); }
   pdfMtime = mt;
   const j = JSON.stringify(comments) + "|" + DOC + "|" + DOCS.map(d => d.name).join(",");
-  if (j !== lastJson && !rec) { lastJson = j; renderTabs(); renderList(); drawPins(); }   // never rebuild the list mid-recording
+  if (j !== lastJson && !rec && !rewording) { lastJson = j; renderTabs(); renderList(); drawPins(); }   // never mid-recording or mid-rewording
   document.getElementById("toggle").textContent = `comments (${st.n_open})`;
   const todo = comments.filter(c => isEdits(c) && c.status === "proposed").length;
   whoSel.querySelector('option[value="edits"]').textContent = todo ? `shortenings (${todo} to decide)` : "shortenings";
