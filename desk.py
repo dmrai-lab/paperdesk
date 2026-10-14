@@ -48,10 +48,15 @@ Whole-paper checks (LaTeX desks):
                                        to, ...), the paragraphs whose short last line those sites would pull up (from
                                        the built PDF), and the lines of text per section; all in brevity.json, one
                                        entry per paragraph with its source and sites
-    python desk.py brevity --verify F.jsonl   proposed shortenings through the gate: a row's "edits" ([old, new] pairs,
+    python desk.py brevity --measure F.jsonl  the paper built as it stands and with every edit of F (a --verify'd
+                                       file) applied, in scratch copies (the source is never touched): the pages
+                                       each way, and a marked copy with the cut words red and the new ones blue
+    python desk.py brevity --verify F.jsonl [--flag]   proposed shortenings through the gate: a row's "edits" ([old, new] pairs,
                                        old verbatim) or "suggestion" against its "original"; what drops a citation,
                                        reference, number, maths, negation, quantifier or hedge is refused; the rest go
-                                       to F.kept.jsonl, one comment per paragraph listing its edits
+                                       to F.kept.jsonl, one comment per paragraph listing its edits. --flag: a
+                                       negation, quantifier or hedge fewer is not refused but listed in the row's
+                                       "flags", edit by edit, for a checker to rule on
     python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
                                        (references identified by DOI, through Crossref when they carry none)
 """
@@ -289,13 +294,27 @@ def main(argv):
     elif cmd == "brevity":
         # where the paper could be shorter, and the gate for a shorter version; brevity.py says how
         import brevity
-        argv = list(argv[1:]); src = _opt(argv, "--verify")
+        argv = list(argv[1:]); src = _opt(argv, "--verify"); trims = _opt(argv, "--measure")
+        if trims:
+            rows = [json.loads(l) for l in Path(trims).read_text().splitlines() if l.strip()]
+            docs = [(d.name, d.file, d.build) for d in DOCS if d.file.endswith(".tex")]
+            if not all(b for _, _, b in docs):
+                raise SystemExit("--measure builds the paper: the config needs a build command")
+            out = CONFIG.parent / "brevity_build"
+            pages, applied, missed = brevity.measure(PAPER, docs, rows, out)
+            for f, line, old in missed:
+                print(f"NOT APPLIED {f}:{line}  '{' '.join(old.split())[:80]}' (not found in the source as it stands)")
+            a, b = pages["as-is"], pages["trimmed"]
+            print(f"{applied} edits in {len(rows)} paragraphs applied to a copy; "
+                  + "; ".join(f"{k}: {a[k]} -> {b[k]} pages" for k in a)
+                  + f". The marked copy (cut red, new blue): {out / 'marked'}")
+            return
         if src:
             rows = [json.loads(l) for l in Path(src).read_text().splitlines() if l.strip()]
-            kept, dropped = brevity.verify(rows)
+            kept, dropped = brevity.verify(rows, strict="--flag" not in argv)
             out = Path(src).with_suffix(".kept.jsonl")
-            out.write_text("".join(json.dumps({k: v for k, v in d.items() if k != "original"}, ensure_ascii=False) + "\n"
-                                   for d in kept))
+            out.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in kept))   # original kept: a second
+            #                                                                    pass (a checker, --measure) reads it
             for d in dropped:
                 print(f"REFUSED {d.get('file')}:{d.get('line')}  " + "; ".join(d["lost"]))
             print(f"{len(kept)} of {len(rows)} kept ({sum(d['saved'] for d in kept)} characters saved) in {out}")

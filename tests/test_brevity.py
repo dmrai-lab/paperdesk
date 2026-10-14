@@ -81,3 +81,54 @@ def test_verify_edits():
     assert "not in the source" in d["lost"][0]
     [], [d] = brevity.verify([dict(original=orig, edits=[[r" (Fig.~\ref{fig:cat})", ""]])])
     assert "cross-reference" in d["lost"][0]
+
+
+def test_every_paragraph_is_a_candidate_in_reading_order():
+    s = [sent("Replay answers every acquisition by an inner product.", 2, 0), sent("The pack is read once.", 2, 1),
+         sent("The walkers that are near the wall reflect.", 5, 2)]
+    got = brevity.paragraphs(s, brevity.sites(s), [])
+    assert [d["para"] for d in got] == [2, 5] and got[0]["words"] == 13 and got[0]["sites"] == [] and got[0]["needs"] is None
+
+
+def test_an_edit_that_tears_a_group_is_refused():
+    orig = r"The \emph{pack} holds $K=256$ modes of the walk, read in order to replay it."
+    [], [d] = brevity.verify([dict(original=orig, edits=[[r"\emph{pack", "pack"]])])
+    assert "brace group" in d["lost"][0]
+    [], [d] = brevity.verify([dict(original=orig, edits=[["$K=256", "K"]])])
+    assert "brace group or maths" in d["lost"][0]
+    [k], [] = brevity.verify([dict(original=orig, edits=[["in order to", "to"]])])
+
+
+def test_edits_land_in_the_source_nearest_their_line():
+    text = "in order to replay\n\nother words\n\nwe read it in order\nto replay it\n"
+    out, n, miss = brevity.edit_source(text, dict(line=5, edits=[["in order to", "to"], ["absent words", "x"]]))
+    assert out == "in order to replay\n\nother words\n\nwe read it to replay it\n" and n == 1 and miss == ["absent words"]
+    marked, _, _ = brevity.edit_source(text, dict(line=1, edits=[["in order to", "to"]]), mark=True)
+    assert marked.startswith(r"\brevcut{in order to}\brevnew{to} replay")
+
+
+def test_build_inputs_are_the_files_the_build_read(tmp_path):
+    (tmp_path / "sections").mkdir(); (tmp_path / "notes").mkdir()
+    for f in ("main.tex", "sections/a.tex", "refs.bib", "notes/big.dat"):
+        (tmp_path / f).write_text("x")
+    (tmp_path / "main.fls").write_text(f"PWD {tmp_path}\nINPUT ./sections/a.tex\nINPUT /usr/share/texmf/tex/latex/base/article.cls\n"
+                                      f"INPUT {tmp_path}/main.tex\nOUTPUT main.pdf\n")
+    assert brevity.build_inputs(tmp_path, ["main.tex"]) == ["main.tex", "refs.bib", "sections/a.tex"]
+
+
+def test_verifying_twice_reads_the_same():
+    orig = r"The colour of the cat is measured in order to compare it with the dog (Fig.~\ref{fig:cat})."
+    [k], [] = brevity.verify([dict(original=orig, note="Two trims.", edits=[["in order to", "to"]])])
+    [k2], [] = brevity.verify([k])
+    assert k2["text"] == k["text"] and k["text"].startswith("Two trims. 'in order to' → 'to'")
+
+
+def test_a_restating_sentence_may_carry_its_only_away_for_a_checker():
+    orig = "Only the band matters, as Table 2 shows. The pack's band is the only quantity that matters here. It is read once."
+    cut = [["The pack's band is the only quantity that matters here. ", ""]]
+    [], [d] = brevity.verify([dict(original=orig, edits=cut)])
+    assert "quantifier or hedge dropped: only" in d["lost"][0]
+    [k], [] = brevity.verify([dict(original=orig, edits=cut)], strict=False)
+    assert k["flags"] == [[cut[0][0], ["quantifier or hedge dropped: only"]]] and ": checked]" in k["text"]
+    [], [d] = brevity.verify([dict(original=orig, edits=[["as Table 2 shows", "as shown"]])], strict=False)
+    assert "numbers dropped" in d["lost"][0]                                     # the facts are never a checker's call

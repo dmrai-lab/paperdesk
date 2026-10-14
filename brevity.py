@@ -290,8 +290,11 @@ def _count(rx, text):
             for w in set(x.lower() for x in re.findall(rx, text, re.I))}
 
 
-def gate(original, rewrite):
-    """What the rewrite loses of the original (both LaTeX source), as a list of reasons; empty when it may stand."""
+def gate(original, rewrite, strict=True):
+    """What the rewrite loses of the original (both LaTeX source), as a list of reasons; empty when it may stand.
+    The citations, cross-references, numbers, inline maths and emphasised terms are refused mechanically; with
+    ``strict`` so are a negation and a quantifier or hedge fewer, which otherwise are :func:`flags` for a reader to
+    rule on (a sentence that restates another may carry its "only" away)."""
     lost = []
     for name, rx in (("citation", check.CITE_RE), ("cross-reference", check.REF_RE)):
         a, b = _keys(rx, original), _keys(rx, rewrite)
@@ -308,6 +311,16 @@ def gate(original, rewrite):
     if [t for t in emph if t not in rewrite]:
         lost.append(f"emphasised terms dropped: {', '.join(t for t in emph if t not in rewrite)}")
     ta, tb = prose.clean(original), prose.clean(rewrite)
+    if len(tb) >= len(ta):
+        lost.append(f"not shorter ({len(ta)} characters to {len(tb)})")
+    return lost + (flags(original, rewrite) if strict else [])
+
+
+def flags(original, rewrite):
+    """The negations, quantifiers and hedges ``rewrite`` has fewer of than ``original``: what a cut or a rewrite may
+    drop with its meaning intact (a repeated "only") or change it with (a lost "only"); a reader decides."""
+    lost = []
+    ta, tb = prose.clean(original), prose.clean(rewrite)
     na_, nb_ = sum(_count(NEGATIONS, ta).values()), sum(_count(NEGATIONS, tb).values())
     if nb_ < na_ - len(re.findall(r"\bnor\b", ta, re.I)):          # neither ... nor may become not ... or
         lost.append(f"negation dropped ({na_} in the original, {nb_} in the rewrite)")
@@ -315,9 +328,18 @@ def gate(original, rewrite):
     short = [w for w, n in ca.items() if cb.get(w, 0) < n]
     if short:
         lost.append(f"quantifier or hedge dropped: {', '.join(short)}")
-    if len(tb) >= len(ta):
-        lost.append(f"not shorter ({len(ta)} characters to {len(tb)})")
     return lost
+
+
+def _balanced(s):
+    """Whether a span closes every brace group and inline maths it opens: an edit that cuts through one breaks the
+    build whatever it says."""
+    depth = 0
+    for ch in re.sub(r"\\[{}$%]", "", s):
+        depth += (ch == "{") - (ch == "}")
+        if depth < 0:
+            return False
+    return depth == 0 and re.sub(r"\\\$", "", s).count("$") % 2 == 0
 
 
 def apply(original, edits):
@@ -331,38 +353,138 @@ def apply(original, edits):
     return out, None
 
 
-def verify(rows):
+def verify(rows, strict=True):
     """Each proposed shortening through :func:`gate`: ``(kept, dropped)``. A row carries ``original`` (LaTeX source)
     and either ``suggestion`` (the rewrite) or ``edits`` (``[[old, new], ...]``, each ``old`` verbatim in the
     original, applied in turn); a kept row gets ``saved`` (characters) and its ``text`` ends with what it saves,
-    with the edits listed when there are edits, and a dropped one gets ``lost``."""
+    with the edits listed when there are edits (after the row's ``note``, so a kept row verified again reads the same),
+    and a dropped one gets ``lost``. Not ``strict``, a negation or a quantifier fewer does not refuse a row: each
+    edit that drops one is listed in the row's ``flags`` for a checker to rule on, and its comment says so."""
     kept, dropped = [], []
     for d in rows:
         rewrite = d.get("suggestion")
         if d.get("edits"):
+            torn = [o for o, w in d["edits"] if not (_balanced(o) and _balanced(w))]
+            if torn:
+                dropped.append(dict(d, lost=[f"edit cuts through a brace group or maths: '{torn[0]}'"])); continue
             rewrite, bad = apply(d["original"], d["edits"])
             if rewrite is None:
                 dropped.append(dict(d, lost=[f"edit not in the source: '{bad}'"])); continue
-        lost = gate(d["original"], rewrite)
+        lost = gate(d["original"], rewrite, strict=strict)
         if lost:
             dropped.append(dict(d, lost=lost)); continue
+        if not strict and d.get("edits"):
+            d = dict(d, flags=[[o, f] for o, w in d["edits"] if (f := flags(o, w))])
         n = len(prose.clean(d["original"])) - len(prose.clean(rewrite))
         line = (f"; the last line holds {d['needs']}" if d.get("needs") else "")
         if d.get("edits"):
             flat = lambda s: re.sub(r"\s+", " ", s).strip()
-            body = "; ".join(f"'{flat(o)}' → '{flat(w)}'" if w.strip() else f"cut '{flat(o)}'" for o, w in d["edits"])
-            text = ((d.get("text") or "").rstrip() + " " if d.get("text") else "") + f"{body} ({n} characters fewer{line})"
+            flagged = {o: f for o, f in d.get("flags") or []}
+            body = "; ".join((f"'{flat(o)}' → '{flat(w)}'" if w.strip() else f"cut '{flat(o)}'")
+                             + (f" [{'; '.join(flagged[o])}: checked]" if o in flagged else "") for o, w in d["edits"])
+            text = ((d.get("note") or "").rstrip() + " " if d.get("note") else "") + f"{body} ({n} characters fewer{line})"
             kept.append({**{k: v for k, v in d.items() if k not in ("suggestion",)}, "saved": n, "text": text})
         else:
             kept.append(dict(d, saved=n, text=(d.get("text") or "Shorter, the same claims.").rstrip() + f" ({n} characters fewer{line})"))
     return kept, dropped
 
 
+# ----------------------------------------------------------------- measuring: the trimmed paper, built
+MACROS = (r"\providecommand{\brevcut}[1]{{\ifdefined\color\color{red!75!black}\fi[#1]}\,}"
+          r"\providecommand{\brevnew}[1]{{\ifdefined\color\color{blue!70!black}\fi#1}}" "\n")   # after \documentclass:
+#                                                                  a preamble may hold caption text already
+COLOUR = "\\usepackage{xcolor}\n"                                  # before \begin{document}, after the paper's own
+
+
+def build_inputs(paper: Path, roots):
+    """The files a build of ``roots`` reads that live in the paper's folder (the ``.fls`` latexmk leaves), with the
+    bibliographies and the roots themselves: what a scratch copy needs, not the folder's experiments and notes."""
+    want = set(roots)
+    for r in roots:
+        fls = paper / (Path(r).stem + ".fls")
+        for line in (fls.read_text(errors="replace").splitlines() if fls.exists() else []):
+            if line.startswith("INPUT "):
+                f = Path(line[6:].strip())
+                f = f if f.is_absolute() else paper / f
+                try:
+                    want.add(str(f.resolve().relative_to(paper.resolve())))
+                except ValueError:
+                    pass                                     # the TeX distribution's own files
+    want |= {f.name for f in paper.glob("*.bib")} | {f.name for f in paper.glob("*.bbl")}
+    return sorted(w for w in want if (paper / w).is_file())
+
+
+def edit_source(text, row, mark=False):
+    """``text`` (a source file) with the row's edits applied where they stand, each ``old`` matched whitespace-blind
+    and, of several matches, the one nearest the row's line. Returns ``(text, applied, missed)``; with ``mark`` the
+    cut words stay, red, and the new ones are blue."""
+    applied, missed = 0, []
+    for old, new in row.get("edits") or []:
+        rx = re.compile(r"\s+".join(re.escape(w) for w in old.split()))
+        hits = list(rx.finditer(text))
+        if not old.split() or not hits:
+            missed.append(old); continue
+        m = min(hits, key=lambda h: abs(text.count("\n", 0, h.start()) + 1 - int(row.get("line") or 0)))
+        rep_ = (r"\brevcut{" + m.group(0) + "}" + (r"\brevnew{" + new + "}" if new.strip() else "")) if mark else new
+        text = text[:m.start()] + rep_ + text[m.end():]
+        applied += 1
+    return text, applied, missed
+
+
+def pdf_pages(pdf: Path):
+    out = subprocess.run(["pdfinfo", str(pdf)], capture_output=True, text=True).stdout
+    m = re.search(r"^Pages:\s+(\d+)", out, re.M)
+    return int(m.group(1)) if m else None
+
+
+def measure(paper: Path, docs, rows, out: Path, log=print):
+    """Build the paper three ways in scratch copies under ``out`` (``docs``: ``[(name, root .tex, build command),
+    ...]``, built in order): as it stands, with every row's edits applied, and marked (cut words
+    red, new ones blue). The source is never touched. Returns ``{variant: {name: pages}}``, the edits applied and
+    those whose words were not found, and leaves ``out/marked/<root>.pdf`` to read."""
+    import shutil
+    roots = [r for _, r, _ in docs]
+    files = build_inputs(paper, roots)
+    by_file = {}
+    for d in rows:
+        by_file.setdefault(d["file"], []).append(d)
+    pages, applied, missed = {}, 0, []
+    for variant in ("as-is", "trimmed", "marked"):
+        dst = out / variant
+        if dst.exists():
+            shutil.rmtree(dst)
+        for f in files:
+            (dst / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(paper / f, dst / f)
+        if variant != "as-is":
+            for f, rs in by_file.items():
+                text = (dst / f).read_text()
+                for d in rs:
+                    text, n, miss = edit_source(text, d, mark=variant == "marked")
+                    if variant == "trimmed":
+                        applied += n; missed += [(f, d.get("line"), m) for m in miss]
+                (dst / f).write_text(text)
+            if variant == "marked":
+                for r in roots:
+                    src = (dst / r).read_text()
+                    src = re.sub(r"(\\documentclass(?:\[[^\]]*\])?\{[^}]*\}[^\n]*\n)", lambda m: m.group(1) + MACROS, src, count=1)
+                    (dst / r).write_text(src.replace(r"\begin{document}", COLOUR + r"\begin{document}", 1))
+        pages[variant] = {}
+        for name, r, build in docs:
+            res = subprocess.run(build, shell=True, cwd=dst, capture_output=True, text=True)
+            pdf = dst / (Path(r).stem + ".pdf")
+            pages[variant][name] = pdf_pages(pdf) if res.returncode == 0 and pdf.exists() else None
+            if res.returncode != 0:
+                log(f"{variant} {r}: the build failed; its log is {dst / (Path(r).stem + '.log')}")
+        log(f"{variant}: " + ", ".join(f"{k} {v} pages" for k, v in pages[variant].items()))
+    return pages, applied, missed
+
+
 # ----------------------------------------------------------------- output
 def paragraphs(sents, found, holes):
-    """One entry per paragraph that has sites or ends short of the margin: its source, its sites, and ``needs``, the
-    characters its last line holds (a trim of that many pulls the paragraph up by a line). Cheapest line first; the
-    paragraphs without a measured last line follow, by what their sites save."""
+    """Every paragraph of the paper in reading order, each a candidate however its last line falls: its source, its
+    section, its sites (hints, not the limit), and ``needs``, the characters its last line holds where that was
+    measured (a trim of that many pulls the paragraph up by a line)."""
     by = {}
     for s in sents:
         by.setdefault((s.file, s.para), []).append(s)
@@ -371,18 +493,17 @@ def paragraphs(sents, found, holes):
         sites_of.setdefault((x.sentence.file, x.sentence.para), []).append(x)
     hole = {(h.file, h.para): h for h in holes}
     out = []
-    for key in set(sites_of) | set(hole):
-        ss = by.get(key)
-        if not ss:
-            continue
+    for key in by:                                           # insertion order: the reading order of the sentences
+        ss = by[key]
         xs, h = sites_of.get(key, []), hole.get(key)
         est = sum(x.saves for x in xs)
-        out.append(dict(file=key[0], para=key[1], line=ss[0].line, quote=ss[0].quote,
+        out.append(dict(file=key[0], para=key[1], line=ss[0].line, quote=ss[0].quote, section=ss[0].section,
+                        words=sum(len(s.text.split()) for s in ss),
                         original=" ".join(s.src.strip() for s in ss),
                         page=h.page if h else None, doc=h.doc if h else None, last=h.last if h else None,
                         needs=h.needs if h else None, estimate=est,
                         sites=[dict(line=x.sentence.line, name=x.name, words=x.words, move=x.move, saves=x.saves) for x in xs]))
-    return sorted(out, key=lambda d: (d["needs"] is None, d["needs"] or 0, -d["estimate"]))
+    return out
 
 
 def to_json(paras, found, longs, pairs, lines_by, words):
@@ -406,13 +527,13 @@ def report(paras, found, longs, pairs, lines_by, words, per_page=None, pages=Non
     for c, n in sorted(lines_by.items(), key=lambda kv: -kv[1]):
         w = words.get(c, (None, None))
         out.append(f"  {c:13s}{n:6d} lines" + (f"  {w[0]:6d} words" if w[0] else "") + (f"  budget {w[1]}" if w[1] else ""))
-    holes = [d for d in paras if d["needs"]]
+    holes = sorted((d for d in paras if d["needs"]), key=lambda d: d["needs"])
     for k in (15, 30, 50):
         out.append(f"  a line for at most {k:2d} characters cut: {sum(d['needs'] <= k for d in holes):4d} paragraphs")
     kinds = {}
     for x in found:
         kinds[x.name] = kinds.get(x.name, 0) + 1
-    out.append(f"{len(holes)} paragraph ends measured; {len(found)} sites: "
+    out.append(f"{len(paras)} paragraphs ({sum(d['words'] for d in paras)} words), {len(holes)} ends measured; {len(found)} sites: "
                + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1]))
                + f"; {len(longs)} sentences of {LONG} words or more")
     out.append(f"\nthe cheapest lines (of {len(holes)}):")
