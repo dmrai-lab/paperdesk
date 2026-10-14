@@ -27,3 +27,8 @@ model = "small"                     # large-v3 is affordable on a GPU and hears 
 # compute_type = "int8"             # default: float16 on cuda, int8 on cpu
 # cpu_threads = 4                   # cpu only; default half the cores, at most eight
 glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, results"
+
+[dedup]
+# desk.py dedup: the claims the paper makes more than once (pip install sentence-transformers)
+# model = "sentence-transformers/all-mpnet-base-v2"   # any sentence-transformers model trained on paraphrases
+# threads = 8                       # CPU threads for embedding

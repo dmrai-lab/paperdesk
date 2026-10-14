@@ -100,6 +100,25 @@ hit rate can be counted. `desk.py watch` stays quiet about proposed comments and
 one on the page. Writes to `comments.jsonl` take a file lock, so several agents can add at once. Source anchoring
 is for LaTeX desks.
 
+## Claims made twice
+
+A long paper edited in many rounds says some things more than once, and the copies drift apart under separate edits.
+`desk.py dedup` finds them: every prose sentence of the documents (and every pair of consecutive sentences, since a
+claim often spans two) is embedded by a paraphrase-trained sentence model, the paper's mean embedding is removed so
+that the topic every sentence shares does not make everything look alike, and pairs from different places are ranked
+by cosine. Word overlap is printed beside it: high on both is a copy, a high cosine on few shared words a paraphrase.
+Claims made three times or more are listed as clusters.
+
+    pip install sentence-transformers           # CPU is enough: a 50-page paper embeds in about a minute
+    python desk.py dedup --top 60               # ranked pairs and clusters; dedup.json holds each side's quote
+
+The ranking is recall: a definition in the theory and its use in the results come out close by design. Whoever judges
+the candidates (an agent, `AGENTS.md`) posts each real repeat on the occurrence that should go, as a `proposed`
+comment of category `duplicate` naming where the claim stays, so the reviewer settles it on the page like any other.
+The sentence model is `[dedup] model` in the config (default `sentence-transformers/all-mpnet-base-v2`) and its CPU
+threads `[dedup] threads` (8); embeddings are cached by sentence in `.dedup_cache.npz`, so a run after an edit embeds
+only what changed.
+
 ## A Word document
 
 Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does

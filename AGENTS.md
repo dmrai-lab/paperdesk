@@ -16,6 +16,15 @@ You are the editor of the document this desk serves; the reviewer comments on th
 5. Review agents comment from the source, not the page: `python desk.py add --file F --quote "verbatim words" --severity
    S --category C --author ai:ROLE "text"` (or `add --jsonl FILE`); see `python desk.py` for the full form. Their
    comments start `proposed`; triage with `desk.py list --proposed`, `accept ID ...`, `dismiss ID ... "why"`.
+6. Asked for duplicates: `python desk.py dedup` ranks the sentences most alike from different places. For each
+   candidate decide whether it is the same claim, a partial overlap or two distinct claims; a definition and its later
+   use are not a repeat, nor is a caption saying what a panel shows while the text reports its numbers; a caption
+   restating the result is. For a real repeat pick the occurrence that
+   stays by the sections' roles (the introduction motivates, the theory derives, the methods say how, the results
+   report, the discussion interprets; the supplement holds what the paper only cites) and post one comment on each
+   occurrence that should go: `--category duplicate --severity minor` (`major` when the copies disagree, which says
+   so), the quote from `dedup.json`, the text naming where the claim stays, and `--suggest` the cut or the shortened
+   sentence.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in

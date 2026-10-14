@@ -23,6 +23,12 @@ Review agents comment from the source, not the page (LaTeX desks):
 The quote must occur in the file verbatim (whitespace aside); --line picks among several occurrences. A quote that is
 not there is refused, so an agent cannot comment on words the paper does not contain. SyncTeX places the comment on
 the built PDF, where the reviewer sees it beside their own.
+
+Whole-paper checks (LaTeX desks):
+
+    python desk.py dedup [--top N]     the claims the paper makes more than once: the N (60) most alike sentences from
+                                       different places, and the claims made three times or more, for a reviewer to
+                                       judge; also written to dedup.json beside the config, with each side's quote
 """
 import json
 import sys
@@ -213,6 +219,15 @@ def main(argv):
             except OSError:
                 pass
             time.sleep(2)
+    elif cmd == "dedup":
+        # near-duplicate claims, ranked for judgement; dedup.py says how
+        import dedup
+        argv = list(argv[1:]); top = int(_opt(argv, "--top") or 60)
+        opts = _CFG.get("dedup", {})
+        res = dedup.find(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")], opts.get("model", dedup.MODEL),
+                         CONFIG.parent / ".dedup_cache.npz", top, int(opts.get("threads", 8)))
+        dedup.save(res, CONFIG.parent / "dedup.json")
+        print(dedup.report(res))
     else:
         print(__doc__)
 
