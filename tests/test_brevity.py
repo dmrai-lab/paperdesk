@@ -121,3 +121,14 @@ def test_verifying_twice_reads_the_same():
     [k], [] = brevity.verify([dict(original=orig, note="Two trims.", edits=[["in order to", "to"]])])
     [k2], [] = brevity.verify([k])
     assert k2["text"] == k["text"] and k["text"].startswith("Two trims. 'in order to' → 'to'")
+
+
+def test_a_restating_sentence_may_carry_its_only_away_for_a_checker():
+    orig = "Only the band matters, as Table 2 shows. The pack's band is the only quantity that matters here. It is read once."
+    cut = [["The pack's band is the only quantity that matters here. ", ""]]
+    [], [d] = brevity.verify([dict(original=orig, edits=cut)])
+    assert "quantifier or hedge dropped: only" in d["lost"][0]
+    [k], [] = brevity.verify([dict(original=orig, edits=cut)], strict=False)
+    assert k["flags"] == [[cut[0][0], ["quantifier or hedge dropped: only"]]] and ": checked]" in k["text"]
+    [], [d] = brevity.verify([dict(original=orig, edits=[["as Table 2 shows", "as shown"]])], strict=False)
+    assert "numbers dropped" in d["lost"][0]                                     # the facts are never a checker's call

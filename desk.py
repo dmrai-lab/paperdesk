@@ -51,10 +51,12 @@ Whole-paper checks (LaTeX desks):
     python desk.py brevity --measure F.jsonl  the paper built as it stands and with every edit of F (a --verify'd
                                        file) applied, in scratch copies (the source is never touched): the pages
                                        each way, and a marked copy with the cut words red and the new ones blue
-    python desk.py brevity --verify F.jsonl   proposed shortenings through the gate: a row's "edits" ([old, new] pairs,
+    python desk.py brevity --verify F.jsonl [--flag]   proposed shortenings through the gate: a row's "edits" ([old, new] pairs,
                                        old verbatim) or "suggestion" against its "original"; what drops a citation,
                                        reference, number, maths, negation, quantifier or hedge is refused; the rest go
-                                       to F.kept.jsonl, one comment per paragraph listing its edits
+                                       to F.kept.jsonl, one comment per paragraph listing its edits. --flag: a
+                                       negation, quantifier or hedge fewer is not refused but listed in the row's
+                                       "flags", edit by edit, for a checker to rule on
     python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
                                        (references identified by DOI, through Crossref when they carry none)
 """
@@ -309,7 +311,7 @@ def main(argv):
             return
         if src:
             rows = [json.loads(l) for l in Path(src).read_text().splitlines() if l.strip()]
-            kept, dropped = brevity.verify(rows)
+            kept, dropped = brevity.verify(rows, strict="--flag" not in argv)
             out = Path(src).with_suffix(".kept.jsonl")
             out.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in kept))   # original kept: a second
             #                                                                    pass (a checker, --measure) reads it

@@ -190,24 +190,33 @@ Only the bibliography's own metadata goes out; answers are cached in `.refcheck.
 
 ## Brevity
 
-    python desk.py brevity                           # where the paper could say the same in fewer words, and what it buys
-    python desk.py brevity --verify trims.jsonl      # what each proposed trim would lose
+    python desk.py brevity                               # every paragraph, with what the page layout and patterns say
+    python desk.py brevity --verify trims.jsonl [--flag] # what each proposed shortening would lose
+    python desk.py brevity --measure trims.kept.jsonl    # the paper built with them: pages, and a marked copy
 
-`brevity` works at the scale of the page. It traces every line of the built PDFs to its source with SyncTeX and
-reports how many pages each document's prose takes (the rest being figures, tables, displays and references), the
-lines of prose per section, and every paragraph's last line: a paragraph loses that line to a trim of as many
-characters anywhere in it, so the paragraphs are ranked by that cost, cheapest line first. Beside each it lists
-the sites in the paragraph a copy-editor would cut a word or three: the noun behind "of" (the colour of the cat),
-"all of the", a relative clause that only carries "is", an opener that delays the subject, stock phrases with a short
-form (in order to, is given by, in the case of), a weak verb before a noun made of a verb, signposting, stacked hedges,
-passives that name their agent. Sentences of 40 words or more, and neighbours that read alike, are listed too.
+`brevity` lists every paragraph of the paper in reading order as a candidate, with its section and word count. Beside
+each it gives hints: the sites a copy-editor would cut a word or three (the noun behind "of", "all of the", a relative
+clause that only carries "is", an opener that delays the subject, stock phrases with a short form, a weak verb before
+a noun made of a verb, signposting, stacked hedges, passives that name their agent), and, from the built PDF traced
+by SyncTeX, the characters its last line holds. It also reports how many pages each document's prose takes, the lines
+of prose per section, the sentences of 40 words or more, and neighbours that read alike.
 
-The trims are an agent's: for a paragraph it proposes `[old, new]` pairs, each `old` verbatim from the source, that
-remove at least the characters of the last line. `--verify` applies them and refuses the paragraph when the result
-drops a citation, a cross-reference, a number or its unit, inline maths, an emphasised term, a negation, or a
-quantifier or hedge (only, every, at most, approximately, may), or is not shorter. What passes becomes one comment
-per paragraph listing its trims, so a run of 25 paragraphs is 25 comments and about 25 lines. Nothing is applied to
-the source: the author takes the trims they agree with.
+The shortenings are agents'. A trimmer proposes `[old, new]` pairs per paragraph, each `old` verbatim from the source:
+word trims, a long sentence rewritten, a sentence that restates its paragraph cut. `--verify` refuses an edit that
+cuts through a brace group or inline maths, and a paragraph whose result drops a citation, a cross-reference, a
+number or its unit, inline maths or an emphasised term, or is not shorter. A negation, quantifier or hedge fewer
+(only, every, not, may) is refused too, unless `--flag`: then the edit is listed in the row's `flags` for a second,
+independent agent, the checker, which keeps an edit only when it reads at least as well and says the same, and keeps
+a flagged one only when the dropped word was redundant.
+
+`--measure` copies what the build reads (the `.fls` inputs and the bibliographies) into scratch folders beside the
+config, applies every kept edit there, and builds each document as it stands, trimmed, and marked: the cut words in
+red brackets and the new ones in blue, to read like tracked changes. It prints the pages each way. Nothing is ever
+applied to the source: the author takes the edits they agree with.
+
+On a 53-page paper of dense prose (20 400 words) the trimmers proposed 5.4% fewer characters; the checker kept 279
+of 421 edits, 3.1%, which took the paper from 53 to 52 pages. Edits of wording buy about a page; the rest of a page
+budget is content: claims made twice, captions restating the text, a supplement retelling the results.
 
 ## A Word document
 

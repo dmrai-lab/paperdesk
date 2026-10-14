@@ -290,8 +290,11 @@ def _count(rx, text):
             for w in set(x.lower() for x in re.findall(rx, text, re.I))}
 
 
-def gate(original, rewrite):
-    """What the rewrite loses of the original (both LaTeX source), as a list of reasons; empty when it may stand."""
+def gate(original, rewrite, strict=True):
+    """What the rewrite loses of the original (both LaTeX source), as a list of reasons; empty when it may stand.
+    The citations, cross-references, numbers, inline maths and emphasised terms are refused mechanically; with
+    ``strict`` so are a negation and a quantifier or hedge fewer, which otherwise are :func:`flags` for a reader to
+    rule on (a sentence that restates another may carry its "only" away)."""
     lost = []
     for name, rx in (("citation", check.CITE_RE), ("cross-reference", check.REF_RE)):
         a, b = _keys(rx, original), _keys(rx, rewrite)
@@ -308,6 +311,16 @@ def gate(original, rewrite):
     if [t for t in emph if t not in rewrite]:
         lost.append(f"emphasised terms dropped: {', '.join(t for t in emph if t not in rewrite)}")
     ta, tb = prose.clean(original), prose.clean(rewrite)
+    if len(tb) >= len(ta):
+        lost.append(f"not shorter ({len(ta)} characters to {len(tb)})")
+    return lost + (flags(original, rewrite) if strict else [])
+
+
+def flags(original, rewrite):
+    """The negations, quantifiers and hedges ``rewrite`` has fewer of than ``original``: what a cut or a rewrite may
+    drop with its meaning intact (a repeated "only") or change it with (a lost "only"); a reader decides."""
+    lost = []
+    ta, tb = prose.clean(original), prose.clean(rewrite)
     na_, nb_ = sum(_count(NEGATIONS, ta).values()), sum(_count(NEGATIONS, tb).values())
     if nb_ < na_ - len(re.findall(r"\bnor\b", ta, re.I)):          # neither ... nor may become not ... or
         lost.append(f"negation dropped ({na_} in the original, {nb_} in the rewrite)")
@@ -315,8 +328,6 @@ def gate(original, rewrite):
     short = [w for w, n in ca.items() if cb.get(w, 0) < n]
     if short:
         lost.append(f"quantifier or hedge dropped: {', '.join(short)}")
-    if len(tb) >= len(ta):
-        lost.append(f"not shorter ({len(ta)} characters to {len(tb)})")
     return lost
 
 
@@ -342,12 +353,13 @@ def apply(original, edits):
     return out, None
 
 
-def verify(rows):
+def verify(rows, strict=True):
     """Each proposed shortening through :func:`gate`: ``(kept, dropped)``. A row carries ``original`` (LaTeX source)
     and either ``suggestion`` (the rewrite) or ``edits`` (``[[old, new], ...]``, each ``old`` verbatim in the
     original, applied in turn); a kept row gets ``saved`` (characters) and its ``text`` ends with what it saves,
     with the edits listed when there are edits (after the row's ``note``, so a kept row verified again reads the same),
-    and a dropped one gets ``lost``."""
+    and a dropped one gets ``lost``. Not ``strict``, a negation or a quantifier fewer does not refuse a row: each
+    edit that drops one is listed in the row's ``flags`` for a checker to rule on, and its comment says so."""
     kept, dropped = [], []
     for d in rows:
         rewrite = d.get("suggestion")
@@ -358,14 +370,18 @@ def verify(rows):
             rewrite, bad = apply(d["original"], d["edits"])
             if rewrite is None:
                 dropped.append(dict(d, lost=[f"edit not in the source: '{bad}'"])); continue
-        lost = gate(d["original"], rewrite)
+        lost = gate(d["original"], rewrite, strict=strict)
         if lost:
             dropped.append(dict(d, lost=lost)); continue
+        if not strict and d.get("edits"):
+            d = dict(d, flags=[[o, f] for o, w in d["edits"] if (f := flags(o, w))])
         n = len(prose.clean(d["original"])) - len(prose.clean(rewrite))
         line = (f"; the last line holds {d['needs']}" if d.get("needs") else "")
         if d.get("edits"):
             flat = lambda s: re.sub(r"\s+", " ", s).strip()
-            body = "; ".join(f"'{flat(o)}' → '{flat(w)}'" if w.strip() else f"cut '{flat(o)}'" for o, w in d["edits"])
+            flagged = {o: f for o, f in d.get("flags") or []}
+            body = "; ".join((f"'{flat(o)}' → '{flat(w)}'" if w.strip() else f"cut '{flat(o)}'")
+                             + (f" [{'; '.join(flagged[o])}: checked]" if o in flagged else "") for o, w in d["edits"])
             text = ((d.get("note") or "").rstrip() + " " if d.get("note") else "") + f"{body} ({n} characters fewer{line})"
             kept.append({**{k: v for k, v in d.items() if k not in ("suggestion",)}, "saved": n, "text": text})
         else:
@@ -374,8 +390,10 @@ def verify(rows):
 
 
 # ----------------------------------------------------------------- measuring: the trimmed paper, built
-MARKUP = (r"\usepackage{xcolor}\providecommand{\brevcut}[1]{{\color{red!75!black}#1}}"
-          r"\providecommand{\brevnew}[1]{{\color{blue!70!black}#1}}" "\n")
+MACROS = (r"\providecommand{\brevcut}[1]{{\ifdefined\color\color{red!75!black}\fi[#1]}\,}"
+          r"\providecommand{\brevnew}[1]{{\ifdefined\color\color{blue!70!black}\fi#1}}" "\n")   # after \documentclass:
+#                                                                  a preamble may hold caption text already
+COLOUR = "\\usepackage{xcolor}\n"                                  # before \begin{document}, after the paper's own
 
 
 def build_inputs(paper: Path, roots):
@@ -449,7 +467,8 @@ def measure(paper: Path, docs, rows, out: Path, log=print):
             if variant == "marked":
                 for r in roots:
                     src = (dst / r).read_text()
-                    (dst / r).write_text(src.replace(r"\begin{document}", MARKUP + r"\begin{document}", 1))
+                    src = re.sub(r"(\\documentclass(?:\[[^\]]*\])?\{[^}]*\}[^\n]*\n)", lambda m: m.group(1) + MACROS, src, count=1)
+                    (dst / r).write_text(src.replace(r"\begin{document}", COLOUR + r"\begin{document}", 1))
         pages[variant] = {}
         for name, r, build in docs:
             res = subprocess.run(build, shell=True, cwd=dst, capture_output=True, text=True)

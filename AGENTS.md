@@ -49,18 +49,21 @@ You are the editor of the document this desk serves; the reviewer comments on th
    `major` (`--category reference`): find the right DOI or the real work, and never invent one. A title, author or year
    that disagrees: look at the record, then say which side is wrong; a book's other edition or a paper's online year is
    a note, not an error.
-10. Asked for brevity: `python desk.py brevity`, then work down `paragraphs` in `brevity.json`, cheapest line
-   first, at most 25 a run unless the author asks for more. For each paragraph find the smallest set of trims that
-   removes at least `needs` characters (its last line, which then goes): the noun behind "of" as a possessive or a
-   modifier, a "which is" dropped, a stock phrase shortened, the action made the verb, a word that repeats the
-   clause before it cut; its `sites` are hints, not the limit. Each trim is an `[old, new]` pair with `old` verbatim
-   from `original`. The claims of the paragraph must stay the same both ways: no hedge, scope word, qualifier or
-   relation changed. Write one JSON line per paragraph with `file`, `line`, `quote`, `original` and `needs` from
-   `brevity.json`, your `edits`, `category` `brevity`, `severity` `style` and `author` `ai:brevity`; run
-   `python desk.py brevity --verify FILE`, never post a refused row, and post the kept file with
-   `desk.py add --jsonl`: one comment per paragraph, its trims listed. Never apply a trim to the source yourself;
-   the author does, from the desk.
-
+10. Asked for brevity: `python desk.py brevity`, then give every paragraph of `paragraphs` in `brevity.json` to a
+   trimmer (contiguous chunks of about 3 500 words, one agent each), then each chunk's kept file to an independent
+   checker. The trimmer proposes, per paragraph, every shortening that keeps every claim: each sentence of 35 words
+   or more rewritten shorter, each sentence or clause that restates the paragraph cut, then the word trims (the noun
+   behind "of" as a possessive or modifier, a "which is" dropped, a stock phrase shortened, the action made the verb);
+   the `sites` are hints, not the limit. Each edit is an `[old, new]` pair with `old` verbatim from `original` and
+   whole brace groups and maths; a sentence rewrite is one edit. Rows carry `file`, `line`, `quote`, `original` and
+   `needs` from `brevity.json`, the `edits`, `category` `brevity`, `severity` `style`, `author` `ai:brevity`; the
+   trimmer runs `desk.py brevity --verify FILE --flag` until nothing is refused. The checker reads each edit in its
+   paragraph and drops it when a claim gets stronger or weaker, a referent or relation (so, because, while) changes,
+   cut text carried anything the paragraph does not keep, or the new text reads worse; a flagged edit stays only when
+   its dropped word was redundant; it verifies its file again. Then `desk.py brevity --measure` on all the checked
+   rows: report the pages before and after and give the author the marked PDFs. Post to the desk only what the
+   author asks for, one comment per paragraph, at most 25 a run unless asked for more. Never apply an edit to the
+   source yourself; the author does.
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in
 `desk.py list` with the document, `[supplement] sections/appendix.tex:12`; a comment's `doc` says which PDF its page
