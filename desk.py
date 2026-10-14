@@ -59,6 +59,14 @@ Whole-paper checks (LaTeX desks):
                                        to F.kept.jsonl, one comment per paragraph listing its edits. --flag: a
                                        negation, quantifier or hedge fewer is not refused but listed in the row's
                                        "flags", edit by edit, for a checker to rule on
+    python desk.py brevity --blind TRIMMED.jsonl CHECKED.jsonl [--share 0.1] [--pass NAME] [--seed N]   the checker's
+                                       kept edits and, unmarked among them, a random sample of the edits it dropped
+                                       (SHARE of those posted), each with the checker's verdict in its edit_meta (never
+                                       shown on the page), to CHECKED.post.jsonl for desk.py add --jsonl
+    python desk.py decisions [--export F.jsonl]   what the author made of the shortenings (decisions.jsonl beside the
+                                       comments, appended at every decision): the edits applied and since undone in the
+                                       source logged as rejections first, then the checker's verdict against the
+                                       author's, the reasons given; --export writes the latest decision on each edit
     python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
                                        (references identified by DOI, through Crossref when they carry none)
 """
@@ -181,17 +189,60 @@ def main(argv):
                 if not todo:
                     print(f"#{cid}: no accepted edit waiting"); continue
                 f = PAPER / c["anchor"]["file"]
-                text = f.read_text()
+                text = f.read_text(); done = []
                 for k in todo:
-                    text, n, miss = brevity.edit_source(text, dict(line=c["anchor"]["line"], edits=[c["edits"][k]]))
+                    old, new = c["edits"][k][0], store.wording(c, k)
+                    if not brevity._balanced(new):
+                        print(f"#{cid} edit {k}: the author's wording leaves a brace group or maths open; not applied: '{new[:80]}'")
+                        continue
+                    text, n, miss = brevity.edit_source(text, dict(line=c["anchor"]["line"], edits=[[old, new]]))
                     if n:
-                        st[k] = "applied"
+                        st[k] = "applied"; done.append(store.record(c, k, "apply", EDITOR))
                     else:
                         print(f"#{cid} edit {k}: its words are no longer in {c['anchor']['file']}: '{' '.join(miss[0].split())[:80]}'")
                 f.write_text(text)
-                store.save(STORE, items)
+                store.save(STORE, items); store.log(STORE, done)
             print(f"#{cid}: {sum(s == 'applied' for s in st)} of {len(st)} edits applied, "
                   f"{sum(s == 'reject' for s in st)} rejected, {sum(s is None for s in st)} undecided")
+    elif cmd == "decisions":
+        # the author's decisions on shortenings, the dataset the next pass learns from: first every applied edit the
+        # author has since undone in the source, logged as a rejection, then counts, or with --export the latest
+        # decision on each edit as one JSON line
+        import brevity
+        argv = list(argv[1:]); out = _opt(argv, "--export")
+        path = STORE.with_name("decisions.jsonl")
+        rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()] if path.exists() else []
+        undone = {(r["id"], r["k"]) for r in rows if r["state"] == "reverted"}
+        new = []
+        for c in load():
+            for k, s in enumerate(c.get("edit_state") or []):
+                if s == "applied" and (c["id"], k) not in undone:
+                    f = PAPER / (c.get("anchor") or {}).get("file", "")
+                    if f.is_file() and brevity.undone(f.read_text(), c["anchor"].get("line"), c["edits"][k][0], store.wording(c, k), c.get("original")):
+                        new.append(store.record(c, k, "source", REVIEWER, state="reverted"))
+                        print(f"#{c['id']} edit {k}: applied, then undone in {c['anchor']['file']}; logged as a rejection")
+        store.log(STORE, new); rows += new
+        last = {}
+        for r in rows:
+            last[(r["id"], r["k"])] = r
+        if out:
+            Path(out).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in last.values()))
+            print(f"{len(last)} edits, the latest decision on each, to {out}")
+            return
+        from collections import Counter
+        verdict = lambda r: (r.get("meta") or {}).get("checker") or "?"
+        state = lambda r: {"applied": "accept", "reverted": "reject"}.get(r["state"], r["state"]) or "undecided"
+        print(f"{len(rows)} decisions logged on {len(last)} edits")
+        for p_, n in Counter(r.get("pass") for r in last.values()).items():
+            print(f"  pass {p_}: {n} edits")
+        tab = Counter((verdict(r), state(r)) for r in last.values())
+        print("  checker \\ author   accept  reject  undecided")
+        for v in sorted({v for v, _ in tab}):
+            print(f"  {v:18s} {tab[v, 'accept']:6d} {tab[v, 'reject']:7d} {tab[v, 'undecided']:10d}")
+        print(f"  in the author's own wording: {sum(1 for r in last.values() if r.get('wording'))}; "
+              f"left as a whole card (rest): {sum(1 for r in last.values() if r['via'] == 'rest')}")
+        for why, n in Counter(r["reason"] for r in last.values() if r.get("reason")).most_common():
+            print(f"  rejected, {why}: {n}")
     elif cmd == "show":
         c = next(x for x in load() if x["id"] == int(argv[1]))
         print(json.dumps({k: v for k, v in c.items() if k != "anchor"}, indent=1, ensure_ascii=False))
@@ -337,7 +388,19 @@ def main(argv):
     elif cmd == "brevity":
         # where the paper could be shorter, and the gate for a shorter version; brevity.py says how
         import brevity
-        argv = list(argv[1:]); src = _opt(argv, "--verify"); trims = _opt(argv, "--measure")
+        argv = list(argv[1:]); src = _opt(argv, "--verify"); trims = _opt(argv, "--measure"); blind = _opt(argv, "--blind")
+        if blind:
+            # the checker's kept edits with a blind sample of its dropped ones, ready for desk.py add --jsonl
+            checked, share, name = argv[0], float(_opt(argv, "--share") or 0.1), _opt(argv, "--pass")
+            read = lambda f: [json.loads(l) for l in Path(f).read_text().splitlines() if l.strip()]
+            kept, dropped, taken = brevity.blind(read(blind), read(checked), share, int(_opt(argv, "--seed") or 0), name)
+            dest = Path(checked).with_suffix(".post.jsonl")
+            dest.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept))
+            for r in dropped:
+                print(f"REFUSED {r['file']}:{r.get('line')}  {r['lost'][0]}")
+            print(f"{sum(len(r['edits']) for r in kept)} edits in {len(kept)} paragraphs, {taken} of them a blind sample "
+                  f"of the checker's dropped ones, to {dest}")
+            return
         if trims:
             rows = [json.loads(l) for l in Path(trims).read_text().splitlines() if l.strip()]
             docs = [(d.name, d.file, d.build) for d in DOCS if d.file.endswith(".tex")]

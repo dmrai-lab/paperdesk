@@ -11,6 +11,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import store
+
 
 PROBES = (0.0, 12.0, 24.0)           # points to the right of the one asked about, along the same line
 
@@ -177,7 +179,8 @@ SEVERITIES = ("error", "major", "minor", "style")
 def comment_from_source(paper: Path, pdf, d, author):
     """A comment made from the source, not the page (a review agent's): ``d`` holds ``file``, ``quote`` (the source
     words verbatim), ``text`` and optionally ``line`` (which occurrence), ``severity``, ``category``, ``suggestion``,
-    ``edits`` (``[[old, new], ...]``, each decided on its own, with ``note``, ``saved`` and ``flags``)
+    ``edits`` (``[[old, new], ...]``, each decided on its own, with ``note``, ``saved``, ``flags``, the paragraph as
+    ``original``, the ``pass`` that proposed them and per edit ``edit_meta``, which the page never shows)
     and ``author``. It is ``proposed``, not ``open``, until accepted. Raises ``LookupError`` or ``ValueError`` when
     it cannot be anchored or is malformed: an agent's comment that names no real words is refused, not kept.
 
@@ -205,10 +208,10 @@ def comment_from_source(paper: Path, pdf, d, author):
         c["doc"] = name
     if d.get("edits"):                                       # a shortening: decided edit by edit on the page
         c["edits"] = [[str(o), str(w)] for o, w in d["edits"]]
-        c["edit_state"] = [None] * len(c["edits"])
-        for k in ("note", "saved", "flags"):
+        for k in ("note", "saved", "flags", "original", "pass", "edit_meta"):
             if d.get(k) is not None:
                 c[k] = d[k]
+        store.per_edit(c)
     return c
 
 

@@ -368,7 +368,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, d.pdf.read_bytes(), "application/pdf", save)
         if u.path == "/api/comments":
             reanchor_if_rebuilt()
-            return self._send(200, load_comments())
+            # the page never learns what the pipeline thought of an edit (the checker's verdict): the author judges blind
+            return self._send(200, [{k: v for k, v in c.items() if k not in ("edit_meta", "original")} for c in load_comments()])
         if u.path.startswith("/audio/"):
             f = AUDIO / Path(u.path).name
             if not f.exists():
@@ -437,7 +438,8 @@ class Handler(BaseHTTPRequestHandler):
                         elif action == "delete":
                             items = [x for x in items if x["id"] != cid]
                         elif action == "edit":                   # a shortening's edits, one ("k") or all, decided
-                            _store.decide(c, d.get("k"), d.get("state"), d.get("author", REVIEWER))
+                            _store.log(STORE, _store.decide(c, d.get("k"), d.get("state"), d.get("author", REVIEWER),
+                                                            d.get("reason"), d.get("new")))
                         break
                 save_comments(items)
             return self._send(200, {"ok": True})

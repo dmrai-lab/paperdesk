@@ -60,12 +60,16 @@ You are the editor of the document this desk serves; the reviewer comments on th
    trimmer runs `desk.py brevity --verify FILE --flag` until nothing is refused. The checker reads each edit in its
    paragraph and drops it when a claim gets stronger or weaker, a referent or relation (so, because, while) changes,
    cut text carried anything the paragraph does not keep, or the new text reads worse; a flagged edit stays only when
-   its dropped word was redundant; it verifies its file again. Then `desk.py brevity --measure` on all the checked
-   rows: report the pages before and after. Post the checked rows with `desk.py add --jsonl`: each paragraph is one
-   card under the page's "shortenings" filter, its edits decided one by one by the author. When the watch says a
+   its dropped word was redundant; it writes its verdict and why for every edit in the row's `judged`
+   (`{old, verdict, why}`) and verifies its file again. Then `desk.py brevity --measure` on all the checked rows: report
+   the pages before and after. `desk.py brevity --blind TRIMMED CHECKED --pass NAME` mixes a blind sample of the
+   checker's dropped edits among its kept ones; post that `.post.jsonl` with `desk.py add --jsonl`: each paragraph is
+   one card under the page's "shortenings" filter, its edits decided one by one by the author, never told which edits
+   the checker dropped. When the watch says a
    card's edits were accepted, run `python desk.py apply ID`: it writes exactly the accepted edits into the source;
    rebuild, reply with what was applied, and resolve the card once none is undecided. Never apply an edit the author
-   has not accepted.
+   has not accepted. Every decision lands in `decisions.jsonl`; `desk.py decisions` summarises them (and logs the
+   applied edits the author has since undone by hand), `--export` gives the dataset a later pass learns from.
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in
 `desk.py list` with the document, `[supplement] sections/appendix.tex:12`; a comment's `doc` says which PDF its page

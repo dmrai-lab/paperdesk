@@ -132,3 +132,29 @@ def test_a_restating_sentence_may_carry_its_only_away_for_a_checker():
     assert k["flags"] == [[cut[0][0], ["quantifier or hedge dropped: only"]]] and ": checked]" in k["text"]
     [], [d] = brevity.verify([dict(original=orig, edits=[["as Table 2 shows", "as shown"]])], strict=False)
     assert "numbers dropped" in d["lost"][0]                                     # the facts are never a checker's call
+
+
+def test_a_blind_sample_of_the_dropped_edits_rides_among_the_kept_in_reading_order():
+    orig = "We use the pool in order to read it. The pack is stored in order to replay it. All of the walkers stay."
+    trim = [dict(file="r.tex", line=1, quote="We use", original=orig,
+                 edits=[["We use the pool in order to", "We use the pool to"], ["stored in order to", "stored to"],
+                        ["All of the walkers", "All walkers"]])]
+    chk = [dict(trim[0], edits=[trim[0]["edits"][2]],
+                judged=[dict(old=trim[0]["edits"][0][0], verdict="drop", why="x"), dict(old=trim[0]["edits"][1][0], verdict="drop", why="y"),
+                        dict(old=trim[0]["edits"][2][0], verdict="keep", why="z")])]
+    [r], [], n = brevity.blind(trim, chk, share=0.5, name="p1")
+    assert n == 1 and len(r["edits"]) == 2 and r["pass"] == "p1"
+    assert [m["checker"] for m in r["edit_meta"]].count("drop") == 1 and r["edits"][-1] == ["All of the walkers", "All walkers"]
+    [r], [], n = brevity.blind(trim, [], share=1.0)                     # a paragraph the checker left out: all dropped
+    assert n == 3 and [e[0] for e in r["edits"]] == [e[0] for e in trim[0]["edits"]]
+    assert brevity.blind(trim, chk, share=0.0)[2] == 0
+
+
+def test_an_applied_edit_undone_by_hand_is_seen():
+    assert brevity.undone("we read it in order to\nreplay it\n", 1, "in order to", "to")
+    assert not brevity.undone("we read it to replay it\n", 1, "in order to", "to")
+    assert not brevity.undone("far\n" * 100 + "in order to\n", 1, "in order to", "to")         # too far from its line
+    twice = "in order to read, and in order to replay"                   # one of two applied: undone once both are back
+    assert not brevity.undone("in order to read, and to replay\n", 1, "in order to", "to", twice)
+    assert brevity.undone(twice + "\n", 1, "in order to", "to", twice)
+    assert not brevity.undone("the pack, stored once\n", 1, "the pack", "the pack, stored once")   # old inside new

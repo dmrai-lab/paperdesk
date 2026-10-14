@@ -1,5 +1,6 @@
 paperdesk.toml
 comments.jsonl
+decisions.jsonl
 comments.tmp
 audio/
 models/

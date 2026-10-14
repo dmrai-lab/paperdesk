@@ -389,6 +389,53 @@ def verify(rows, strict=True):
     return kept, dropped
 
 
+def _span(original, old):
+    """Where ``old`` stands in the original, as ``(start, end)``, or None."""
+    k = original.find(old)
+    return (k, k + len(old)) if k >= 0 else None
+
+
+def blind(trimmed, checked, share=0.1, seed=0, name=None):
+    """The rows to post: each paragraph's edits the checker kept, and among them, unmarked, a random sample of the ones
+    it dropped, about ``share`` of all the edits posted. The author's decisions on the dropped ones are the only way
+    to learn whether the checker is too strict. ``trimmed`` are the trimmer's verified rows, ``checked`` the checker's,
+    whose ``judged`` holds ``{old, verdict, why}`` per edit and whose ``edits`` are the ones it kept (a paragraph
+    the checker left out lost every edit). Each row's edits stand in reading order with ``edit_meta`` beside them,
+    ``{checker: keep|drop, why}``, which the page never shows; ``name`` labels the pass."""
+    import random
+    key = lambda r: (r["file"], r.get("line"), r["quote"])
+    judged = {key(r): r for r in checked}
+    rows, pool, kept_n = [], [], 0
+    for r in trimmed:
+        c = judged.get(key(r)) or {}
+        why = {j["old"]: j for j in c.get("judged") or []}
+        keep = {o for o, _ in c.get("edits") or []}
+        edits = [(o, w, dict(checker="keep", why=(why.get(o) or {}).get("why"))) for o, w in r["edits"] if o in keep]
+        kept_n += len(edits)
+        row = dict({k: v for k, v in r.items() if k not in ("judged", "edit_meta", "lost")}, edits=edits)
+        rows.append(row)
+        pool += [(row, (o, w, dict(checker="drop", why=(why.get(o) or {}).get("why")))) for o, w in r["edits"] if o not in keep]
+    want = round(share * kept_n / (1 - share)) if share < 1 else len(pool)
+    random.Random(seed).shuffle(pool)
+    taken = 0
+    for row, e in pool:
+        if taken >= want:
+            break
+        spans = [_span(row["original"], o) for o, _, _ in row["edits"]]
+        mine = _span(row["original"], e[0])
+        if mine and all(x and (x[1] <= mine[0] or mine[1] <= x[0]) for x in spans):
+            row["edits"].append(e); taken += 1
+    out = []
+    for row in rows:
+        if not row["edits"]:
+            continue
+        row["edits"].sort(key=lambda e: _span(row["original"], e[0])[0])
+        out.append(dict(row, edits=[[o, w] for o, w, _ in row["edits"]], edit_meta=[m for _, _, m in row["edits"]],
+                        **({"pass": name} if name else {})))
+    kept, dropped = verify(out, strict=False)
+    return kept, dropped, taken
+
+
 # ----------------------------------------------------------------- measuring: the trimmed paper, built
 MACROS = (r"\providecommand{\brevcut}[1]{{\ifdefined\color\color{red!75!black}\fi[#1]}\,}"
           r"\providecommand{\brevnew}[1]{{\ifdefined\color\color{blue!70!black}\fi#1}}" "\n")   # after \documentclass:
@@ -429,6 +476,24 @@ def edit_source(text, row, mark=False):
         text = text[:m.start()] + rep_ + text[m.end():]
         applied += 1
     return text, applied, missed
+
+
+def _near(text, words, line, reach):
+    """How often ``words`` stand in ``text`` (whitespace-blind) within ``reach`` lines of ``line``."""
+    if not words.split():
+        return 0
+    rx = re.compile(r"\s+".join(re.escape(w) for w in words.split()))
+    return sum(abs(text.count("\n", 0, h.start()) + 1 - int(line or 0)) <= reach for h in rx.finditer(text))
+
+
+def undone(text, line, old, new, original=None, reach=40):
+    """Whether an applied edit has been undone in the source: its old words stand near ``line`` as often as they did in
+    the paragraph before (``original``; once, without it), not counting those inside its new words. An edit the
+    author accepted and later reverted by hand is a rejection the page never saw."""
+    flat = lambda s: " ".join(s.split())
+    before = max(1, flat(original).count(flat(old))) if original else 1
+    inside = _near(text, new, line, reach) * flat(new).count(flat(old)) if flat(old) in flat(new) else 0
+    return _near(text, old, line, reach) - inside >= before
 
 
 def pdf_pages(pdf: Path):

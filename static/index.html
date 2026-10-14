@@ -65,10 +65,13 @@
   .c.resolved { opacity:.55; }
 .c .edit { margin:4px 0; padding:3px 6px; border-left:3px solid var(--rule); line-height:1.35; }
 .c .edit .del { color:#b4232a; text-decoration:line-through; } .c .edit .ins { color:#1a5fb4; }
-.c .edit.accept, .c .edit.applied { border-left-color:#2e8540; } .c .edit.reject { opacity:.4; } .c .edit.applied { opacity:.6; }
+.c .edit.accept, .c .edit.applied { border-left-color:#2e8540; } .c .edit.reject { color:var(--muted); } .c .edit.reject .del, .c .edit.reject .ins { opacity:.5; } .c .edit.applied { opacity:.6; }
 .c .edit .eb { white-space:nowrap; } .c .edit .eb button { padding:0 7px; margin-left:3px; }
 .c .edit.accept .eb button[data-e="accept"], .c .edit.reject .eb button[data-e="reject"] { background:var(--soft-green); }
 .c .edit .flag { cursor:help; }
+.c .edit .why { margin-top:3px; } .c .edit .why button { padding:0 6px; margin:2px 3px 0 0; font-size:.85em; }
+.c .edit .why button.on { background:var(--soft-green); border-color:#2e8540; font-weight:600; }
+.c .edit textarea { width:100%; box-sizing:border-box; }
 .c.stale { border-color:var(--accent); } .c .gone { font-size:11.5px; color:var(--accent); margin-bottom:4px; }
 .pin.stale { opacity:.5; outline:1px dashed var(--accent); }
   .c .where { color:var(--muted); font-size:11.5px; margin-bottom:4px; word-break:break-all; }
