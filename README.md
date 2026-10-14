@@ -145,6 +145,19 @@ question, not a verdict: the paper's own results need no citation. Whoever judge
 as `proposed` comments of category `uncited`. Needs `pip install sentence-transformers`; `[citations] model` and
 `threads` as for `dedup`.
 
+A paper can cite little and still miss no source sentence by sentence: it may simply say little about anyone else's
+work. `readinglist` shows what that leaves out:
+
+    python desk.py readinglist --min 3  # the works 3 or more of the field's papers cite that the paper does not
+
+Each paper's references are read from its `.bbl` (biblatex or `\\bibitem`), an inline `thebibliography`, or its `.bib`
+restricted to the keys it cites, and identified by DOI; a reference without one is looked up with Crossref's
+bibliographic search and kept only when the title Crossref returns stands in the reference's own words. Only
+reference strings go to Crossref (`[citations] mailto` puts an address on the requests for Crossref's faster
+pool); the answers are cached in `.citecorpus/crossref.json`, so the first run takes some minutes and later ones
+seconds. The list, with the field papers citing each work, is written to `readinglist.json`. It is a reading list:
+which of those works the paper should engage with, and where, is the author's call.
+
 ## A Word document
 
 Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does

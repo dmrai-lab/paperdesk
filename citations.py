@@ -97,8 +97,8 @@ def _safe_sentences(folder, roots):
         return []
 
 
-def corpus(ids, cache: Path, log=print):
-    """``{arxiv_id: [Sentence, ...]}`` of the corpus papers that have LaTeX source."""
+def sources(ids, cache: Path, log=print):
+    """``{arxiv_id: (folder, root, [Sentence, ...])}`` of the corpus papers that have LaTeX source."""
     out = {}
     for i in ids:
         try:
@@ -111,8 +111,13 @@ def corpus(ids, cache: Path, log=print):
         sents = _safe_sentences(d, [r]) if r else []
         if len(sents) < 50:
             log(f"  {i}: {len(sents)} sentences read, skipped"); continue
-        out[i] = sents
+        out[i] = (d, r, sents)
     return out
+
+
+def corpus(ids, cache: Path, log=print):
+    """``{arxiv_id: [Sentence, ...]}`` of the corpus papers that have LaTeX source."""
+    return {k: v[2] for k, v in sources(ids, cache, log).items()}
 
 
 # ----------------------------------------------------------------- density per section

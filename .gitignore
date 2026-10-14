@@ -15,3 +15,4 @@ dedup.json
 .dedup_cache.npz
 uncited.json
 .citecorpus/
+readinglist.json

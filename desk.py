@@ -33,6 +33,8 @@ Whole-paper checks (LaTeX desks):
                                        in [citations] corpus (arXiv ids; their sources are fetched once)
     python desk.py uncited [--top N]   the uncited sentences the field would have cited, by a classifier learnt from
                                        those papers; also written to uncited.json, with each sentence's quote
+    python desk.py readinglist [--min N]   the works N (3) or more of those papers cite that the paper does not
+                                       (references identified by DOI, through Crossref when they carry none)
 """
 import json
 import sys
@@ -116,7 +118,7 @@ def _cap_threads(n):
 
 def main(argv):
     cmd = argv[0] if argv else "list"
-    if cmd in ("dedup", "citestats", "uncited"):
+    if cmd in ("dedup", "citestats", "uncited", "readinglist"):
         _cap_threads(int(_CFG.get("citations" if cmd != "dedup" else "dedup", {}).get("threads", 8)))
     if cmd == "list":
         argv = list(argv); who = _opt(argv, "--author")
@@ -243,7 +245,7 @@ def main(argv):
                          CONFIG.parent / ".dedup_cache.npz", top, int(opts.get("threads", 8)))
         dedup.save(res, CONFIG.parent / "dedup.json")
         print(dedup.report(res))
-    elif cmd in ("citestats", "uncited"):
+    elif cmd in ("citestats", "uncited", "readinglist"):
         # how the paper cites against its field; citations.py says how
         import citations
         import prose
@@ -253,9 +255,30 @@ def main(argv):
             raise SystemExit("name the field's papers: [citations] corpus = [\"arXiv id\", ...] in the config, or --corpus id,id")
         cache = CONFIG.parent / ".citecorpus"
         print(f"the field: {len(ids)} arXiv papers", file=sys.stderr)
-        field = citations.corpus(ids, cache, log=lambda m: print(m, file=sys.stderr))
-        mine = prose.paper_sentences(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")])
-        if cmd == "citestats":
+        log = lambda m: print(m, file=sys.stderr)
+        srcs = citations.sources(ids, cache, log=log)
+        field = {k: v[2] for k, v in srcs.items()}
+        roots = [d.file for d in DOCS if d.file.endswith(".tex")]
+        mine = prose.paper_sentences(PAPER, roots)
+        if cmd == "readinglist":
+            import references
+            res = references.Resolver(cache / "crossref.json", opts.get("mailto"), log)
+            refs = {k: references.cited_refs(d, [r]) for k, (d, r, _) in srcs.items()}
+            own = references.cited_refs(PAPER, roots)
+            log(f"resolving {sum(map(len, refs.values())) + len(own)} references (cached after the first run)")
+            try:
+                fw = {k: [res(x) for x in v] for k, v in refs.items()}
+                mw = [res(x) for x in own]
+            finally:
+                res.save()
+            unresolved = sum(w is None for v in fw.values() for w in v)
+            stats = (f"{len(own)} references in the paper ({sum(w is None for w in mw)} unresolved); "
+                     f"{sum(map(len, refs.values()))} in {len(refs)} field papers ({unresolved} unresolved, left out)")
+            rows, common = references.gap(fw, mw, int(_opt(argv, "--min") or 3))
+            in_bib = references.bib_keys(PAPER)
+            (CONFIG.parent / "readinglist.json").write_text(json.dumps(references.to_json(rows, common, in_bib), indent=1, ensure_ascii=False))
+            print(references.report(rows, common, len(refs), stats, in_bib=in_bib))
+        elif cmd == "citestats":
             print(citations.stats_report(citations.profile(mine), citations.norm([citations.profile(v) for v in field.values()]),
                                          len(field)))
         else:

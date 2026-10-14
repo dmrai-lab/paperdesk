@@ -32,7 +32,8 @@ You are the editor of the document this desk serves; the reviewer comments on th
    covers it is enough. Post each real gap as `--category uncited --severity minor` (`major` for a claim the paper's
    argument rests on), the quote from `uncited.json`, the text saying what kind of source is needed (the original
    method, a review, the dataset's paper, the tool's paper), and in `--suggest` a reference only when you know it
-   exists: the author reads at least its abstract before it is cited.
+   exists: the author reads at least its abstract before it is cited. `python desk.py readinglist` lists the works
+   the field cites most that the paper does not; report it to the author as a reading list, never as citations to add.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in

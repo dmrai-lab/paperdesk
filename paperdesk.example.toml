@@ -38,3 +38,4 @@ glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, 
 # corpus = ["1907.12685", "2001.06529", "2007.04403"]
 # model = "copenlu/citebert"
 # threads = 8
+# mailto = "you@example.org"           # readinglist: Crossref's polite pool
