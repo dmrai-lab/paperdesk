@@ -176,7 +176,8 @@ SEVERITIES = ("error", "major", "minor", "style")
 
 def comment_from_source(paper: Path, pdf, d, author):
     """A comment made from the source, not the page (a review agent's): ``d`` holds ``file``, ``quote`` (the source
-    words verbatim), ``text`` and optionally ``line`` (which occurrence), ``severity``, ``category``, ``suggestion``
+    words verbatim), ``text`` and optionally ``line`` (which occurrence), ``severity``, ``category``, ``suggestion``,
+    ``edits`` (``[[old, new], ...]``, each decided on its own, with ``note``, ``saved`` and ``flags``)
     and ``author``. It is ``proposed``, not ``open``, until accepted. Raises ``LookupError`` or ``ValueError`` when
     it cannot be anchored or is malformed: an agent's comment that names no real words is refused, not kept.
 
@@ -202,6 +203,12 @@ def comment_from_source(paper: Path, pdf, d, author):
              suggestion=d.get("suggestion"), page=page, x_pt=x, y_pt=y, rect=rect, anchor=anchor, replies=[])
     if name is not None:
         c["doc"] = name
+    if d.get("edits"):                                       # a shortening: decided edit by edit on the page
+        c["edits"] = [[str(o), str(w)] for o, w in d["edits"]]
+        c["edit_state"] = [None] * len(c["edits"])
+        for k in ("note", "saved", "flags"):
+            if d.get(k) is not None:
+                c[k] = d[k]
     return c
 
 

@@ -10,6 +10,8 @@
     python desk.py show ID             one comment in full, with the source lines around its anchor
     python desk.py reply ID "text"     answer it (as the editor named in paperdesk.toml)
     python desk.py resolve ID          mark it done
+    python desk.py apply ID [ID ...]   a shortening's edits the author accepted on the page, written into the source
+                                       where they stand (each old verbatim, whitespace aside); the rest are left
     python desk.py reanchor            every live comment moved to where its words are in the PDF built now (the server
                                        does this by itself whenever the PDF changes)
     python desk.py transcribe [ID]     the words of the voice notes still without any (or one comment's), once a model is installed
@@ -127,6 +129,12 @@ def line_of(c):
     q = (c.get("quote") or "").strip().replace("\n", " ")
     q = (q[:90] + "…") if len(q) > 90 else q
     sug = f"\n    suggest: {c['suggestion']}" if c.get("suggestion") else ""
+    if c.get("edits"):                                       # a shortening: each edit with what the author decided
+        st = c.get("edit_state") or [None] * len(c["edits"])
+        flat = lambda s: " ".join(s.split())
+        sug = "".join(f"\n    [{s or 'undecided'}] '{flat(o)}' → '{flat(w)}'" for (o, w), s in zip(c["edits"], st))
+        return (f"#{c['id']} {c['status']:8s} {where}  {sec}{lab}" + (f"  [{tags}]" if tags else "")
+                + f"\n    quote: \"{q}\"" + (f"\n    {c['note']}" if c.get("note") else "") + sug)
     return (f"#{c['id']} {c['status']:8s} {where}  {sec}{lab}" + (f"  [{tags}]" if tags else "")
             + f"\n    quote: \"{q}\"\n    {c['text']}{sug}")
 
@@ -160,6 +168,30 @@ def main(argv):
                 print(line_of(c))
                 for r in c.get("replies", []):
                     print(f"    ↳ {r['author']}: {r['text']}")
+    elif cmd == "apply":
+        # the edits the author accepted, and only those, into the source
+        import brevity
+        for cid in [int(a) for a in argv[1:] if a.isdigit()]:
+            with store.locked(STORE) as items:
+                c = next((x for x in items if x["id"] == cid), None)
+                if c is None or not c.get("edits"):
+                    print(f"#{cid}: no shortening"); continue
+                st = c.setdefault("edit_state", [None] * len(c["edits"]))
+                todo = [k for k, s in enumerate(st) if s == "accept"]
+                if not todo:
+                    print(f"#{cid}: no accepted edit waiting"); continue
+                f = PAPER / c["anchor"]["file"]
+                text = f.read_text()
+                for k in todo:
+                    text, n, miss = brevity.edit_source(text, dict(line=c["anchor"]["line"], edits=[c["edits"][k]]))
+                    if n:
+                        st[k] = "applied"
+                    else:
+                        print(f"#{cid} edit {k}: its words are no longer in {c['anchor']['file']}: '{' '.join(miss[0].split())[:80]}'")
+                f.write_text(text)
+                store.save(STORE, items)
+            print(f"#{cid}: {sum(s == 'applied' for s in st)} of {len(st)} edits applied, "
+                  f"{sum(s == 'reject' for s in st)} rejected, {sum(s is None for s in st)} undecided")
     elif cmd == "show":
         c = next(x for x in load() if x["id"] == int(argv[1]))
         print(json.dumps({k: v for k, v in c.items() if k != "anchor"}, indent=1, ensure_ascii=False))
@@ -245,6 +277,11 @@ def main(argv):
         def state(items):
             out = {}
             for c in items:
+                if c.get("edits"):                              # a shortening is news once the author accepts an edit
+                    acc = [k for k, s in enumerate(c.get("edit_state") or []) if s == "accept"]
+                    if acc:
+                        out[("e", c["id"])] = ",".join(map(str, acc))
+                    continue
                 if (c.get("anchor") or {}).get("stale") and c["status"] in ("open", "proposed"):
                     out[("s", c["id"])] = c.get("quote") or ""
                 if (c.get("author") or REVIEWER) != REVIEWER and c.get("accepted_by") != REVIEWER:
@@ -259,7 +296,10 @@ def main(argv):
             items = load(); now = state(items)
             for k, text in now.items():
                 if k not in seen:
-                    if k[0] == "s":
+                    if k[0] == "e":
+                        c = next(x for x in items if x["id"] == k[1])
+                        print(f"#{k[1]} edits accepted, apply them with desk.py apply {k[1]}: " + line_of(c).replace("\n", " | "), flush=True)
+                    elif k[0] == "s":
                         c = next(x for x in items if x["id"] == k[1]); a = c.get("anchor") or {}
                         print(f"#{k[1]} stale: its words are no longer in {a.get('file')} (or anywhere in the paper); "
                               f"resolve it, or reply where its point now applies (desk.py list --stale) | quote: "
@@ -268,6 +308,9 @@ def main(argv):
                         c = next(x for x in items if x["id"] == k[1]); print(line_of(c).replace("\n", " | "), flush=True)
                     else:
                         print(f"#{k[1]} reply by {REVIEWER}: {text}", flush=True)
+                elif k[0] == "e" and set(text.split(",")) - set(seen[k].split(",")):   # newly accepted, not newly applied
+                    c = next(x for x in items if x["id"] == k[1])
+                    print(f"#{k[1]} more edits accepted, apply them with desk.py apply {k[1]}: " + line_of(c).replace("\n", " | "), flush=True)
                 elif k[0] != "s" and seen[k] != text and not text.startswith("(voice note"):
                     print(f"#{k[1]} {'voice note transcribed' if k[0] == 'c' else 'reply transcribed'}: {text}", flush=True)
             seen = now

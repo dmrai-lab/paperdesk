@@ -61,9 +61,11 @@ You are the editor of the document this desk serves; the reviewer comments on th
    paragraph and drops it when a claim gets stronger or weaker, a referent or relation (so, because, while) changes,
    cut text carried anything the paragraph does not keep, or the new text reads worse; a flagged edit stays only when
    its dropped word was redundant; it verifies its file again. Then `desk.py brevity --measure` on all the checked
-   rows: report the pages before and after and give the author the marked PDFs. Post to the desk only what the
-   author asks for, one comment per paragraph, at most 25 a run unless asked for more. Never apply an edit to the
-   source yourself; the author does.
+   rows: report the pages before and after. Post the checked rows with `desk.py add --jsonl`: each paragraph is one
+   card under the page's "shortenings" filter, its edits decided one by one by the author. When the watch says a
+   card's edits were accepted, run `python desk.py apply ID`: it writes exactly the accepted edits into the source;
+   rebuild, reply with what was applied, and resolve the card once none is undecided. Never apply an edit the author
+   has not accepted.
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in
 `desk.py list` with the document, `[supplement] sections/appendix.tex:12`; a comment's `doc` says which PDF its page

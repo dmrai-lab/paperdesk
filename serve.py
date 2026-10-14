@@ -416,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                          x_pt=float(d["x_pt"]), y_pt=float(d["y_pt"]), rect=d.get("rect"), anchor=anchor, replies=[])
                 items.append(c); save_comments(items)
             return self._send(200, c)
-        m = re.match(r"^/api/comments/(\d+)/(reply|resolve|reopen|accept|dismiss|delete)$", u.path)
+        m = re.match(r"^/api/comments/(\d+)/(reply|resolve|reopen|accept|dismiss|delete|edit)$", u.path)
         if m:
             cid, action = int(m.group(1)), m.group(2)
             d = self._json()
@@ -436,6 +436,8 @@ class Handler(BaseHTTPRequestHandler):
                             c["status"] = "dismissed"
                         elif action == "delete":
                             items = [x for x in items if x["id"] != cid]
+                        elif action == "edit":                   # a shortening's edits, one ("k") or all, decided
+                            _store.decide(c, d.get("k"), d.get("state"), d.get("author", REVIEWER))
                         break
                 save_comments(items)
             return self._send(200, {"ok": True})

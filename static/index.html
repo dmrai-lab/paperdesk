@@ -63,6 +63,12 @@
   #side { position:absolute; top:var(--top); right:0; width:var(--side); bottom:0; overflow:auto; background:var(--panel); border-left:1px solid var(--rule); padding:12px; box-sizing:border-box; font-size:13px; }
   .c { border:1px solid var(--rule); border-radius:6px; padding:8px 10px; margin-bottom:10px; }
   .c.resolved { opacity:.55; }
+.c .edit { margin:4px 0; padding:3px 6px; border-left:3px solid var(--rule); line-height:1.35; }
+.c .edit .del { color:#b4232a; text-decoration:line-through; } .c .edit .ins { color:#1a5fb4; }
+.c .edit.accept, .c .edit.applied { border-left-color:#2e8540; } .c .edit.reject { opacity:.4; } .c .edit.applied { opacity:.6; }
+.c .edit .eb { white-space:nowrap; } .c .edit .eb button { padding:0 7px; margin-left:3px; }
+.c .edit.accept .eb button[data-e="accept"], .c .edit.reject .eb button[data-e="reject"] { background:var(--soft-green); }
+.c .edit .flag { cursor:help; }
 .c.stale { border-color:var(--accent); } .c .gone { font-size:11.5px; color:var(--accent); margin-bottom:4px; }
 .pin.stale { opacity:.5; outline:1px dashed var(--accent); }
   .c .where { color:var(--muted); font-size:11.5px; margin-bottom:4px; word-break:break-all; }
@@ -105,7 +111,7 @@
 <body>
 <div id="top"><b>paperdesk</b><span id="paper"></span><span id="tabs"></span><span class="grow"></span>
   <span id="status"></span>
-  <select id="who" title="whose comments to show"><option value="all">all</option><option value="mine">mine</option><option value="agents">agents</option><option value="proposed">to triage</option></select>
+  <select id="who" title="whose comments to show"><option value="all">all</option><option value="mine">mine</option><option value="agents">agents</option><option value="proposed">to triage</option><option value="edits">shortenings</option></select>
   <label id="hide" title="resolved comments: neither their pins on the page nor their cards in the list"><input type="checkbox" id="hideres"><span>hide resolved</span></label>
   <span id="findbox"><input id="find" type="search" placeholder="find in pdf" autocomplete="off" spellcheck="false"><span id="findcount"></span><button id="findprev" class="zoom" title="previous match (shift+enter)">‹</button><button id="findnext" class="zoom" title="next match (enter)">›</button></span>
   <button id="theme" class="zoom" title="night mode">☾</button>
