@@ -5,13 +5,17 @@ sentence is prose of at least six words: comments, display maths, tables, verbat
 scaffolding are not prose, and a blank line, a heading or a display ends a paragraph. Each :class:`Sentence` carries
 its file, the line it starts on, its paragraph, its text with the markup stripped (what is compared), and ``quote``:
 its first words as they stand in the source, which ``anchor.find_quote`` finds at that line, so a finding about the
-sentence becomes a ``desk.py add`` comment as it is.
+sentence becomes a ``desk.py add`` comment as it is. It also carries the citation keys it cites and the title of the
+``\\section`` it stands in, followed through the inputs in reading order; ``appendix`` is set after ``\\appendix`` and
+throughout every document after the first (a supplement).
 """
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 INPUT_RE = re.compile(r"(?<!\\)\\(?:input|include)\{([^}]+)\}")
+CITE_RE = re.compile(r"\\(?:cite|citep|citet|citealp|citealt|parencite|textcite|autocite|footcite|supercite)\*?(?:\[[^\]]*\])*\{([^}]*)\}")
+EVENT_RE = re.compile(r"(?<!\\)\\(?:(section)\*?(?:\[[^\]]*\])?\{((?:[^{}]|\{[^{}]*\})*)\}|(appendix)\b|(?:input|include)\{([^}]+)\})")
 NOT_PROSE_ENVS = r"equation\*?|align\*?|alignat\*?|gather\*?|multline\*?|eqnarray\*?|displaymath|tabular\*?|tabularx|verbatim|lstlisting|minted|tikzpicture|algorithmic"
 MIN_WORDS = 6
 QUOTE_WORDS = 25
@@ -27,6 +31,9 @@ class Sentence:
     index: int          # sentence number within the file
     text: str           # markup stripped: what is compared
     quote: str          # its first words verbatim from the source (no comment inside), for ``desk.py add``
+    cites: tuple = ()   # the citation keys in it
+    section: str = ""   # the title of the \\section it stands in ("" before the first)
+    appendix: bool = False
 
 
 def tree(paper: Path, roots):
@@ -71,12 +78,18 @@ def mask(text):
 
 def clean(s):
     """The words of a stretch of source: citations and references dropped, inline maths as ``X``, markup gone."""
-    s = re.sub(r"\\(?:cite[tp]?|citealp|parencite|textcite|ref|eqref|autoref|cref|Cref|label|url)\*?(\[[^\]]*\])*\{[^}]*\}", "", s)
+    s = re.sub(r"\\(?:ref|eqref|autoref|cref|Cref)\*?\{[^}]*\}", "1", s)            # a reference reads as a number
+    s = CITE_RE.sub("", s)
+    s = re.sub(r"\\(?:label|url)\*?\{[^}]*\}", "", s)
     s = re.sub(r"\$[^$]*\$|\\\(.*?\\\)", " X ", s)
     for _ in range(3):
         s = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?\{([^{}]*)\}", r"\2", s)
     s = re.sub(r"\\[a-zA-Z]+\*?|\\.", " ", s)
     s = re.sub(r"[{}~]", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    for _ in range(2):                                       # what a removed citation leaves: "( )", "[ ; ]", " ."
+        s = re.sub(r"[(\[]\s*(?:[,;]\s*)*(?:e\.g\.|see|cf\.)?\s*(?:[,;]\s*)*[)\]]", "", s)
+        s = re.sub(r"\s+([.,;:)\]])", r"\1", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -100,8 +113,14 @@ def _quote(raw):
 
 
 def sentences(paper: Path, file):
-    """Every prose sentence of one file, in order."""
+    """Every prose sentence of one file, in order (no section: :func:`paper_sentences` follows those)."""
+    return [x for _, x in _sentences(paper, file)]
+
+
+def _sentences(paper: Path, file):
+    """``(offset, Sentence)`` for every prose sentence of one file."""
     raw = (paper / file).read_text()
+    uncommented = _mask_comments(raw)
     masked = mask(raw)
     out, para = [], 0
     for block in re.finditer(r"(?:[^\n]*\S[^\n]*(?:\n|$))+", masked):
@@ -117,10 +136,35 @@ def sentences(paper: Path, file):
             q = _quote(raw[s:e])
             if len(q.split()) < 3:
                 continue
-            out.append(Sentence(file, raw.count("\n", 0, s) + 1, para, len(out), text, q))
+            cites = tuple(k.strip() for m in CITE_RE.finditer(uncommented[s:e]) for k in m.group(1).split(",") if k.strip())
+            out.append((s, Sentence(file, raw.count("\n", 0, s) + 1, para, len(out), text, q, cites)))
     return out
 
 
 def paper_sentences(paper: Path, roots):
-    """Every prose sentence the documents reach, file by file in reading order."""
-    return [s for f in tree(paper, roots) for s in sentences(paper, f)]
+    """Every prose sentence the documents reach, in reading order, each with its section and appendix flag."""
+    out, seen = [], set()
+
+    def walk(rel, state):
+        rel = rel if rel.endswith(".tex") else rel + ".tex"
+        if rel in seen or not (paper / rel).is_file():
+            return state
+        seen.add(rel)
+        events = [(m.start(), m) for m in EVENT_RE.finditer(_mask_comments((paper / rel).read_text()))]
+        sents = _sentences(paper, rel)
+        k = 0
+        for at, m in events + [(float("inf"), None)]:
+            while k < len(sents) and sents[k][0] < at:
+                x = sents[k][1]; x.section, x.appendix = state; out.append(x); k += 1
+            if m is None:
+                break
+            if m.group(1):
+                state = (re.sub(r"\s+", " ", clean(m.group(2))), state[1])
+            elif m.group(3):
+                state = (state[0], True)
+            else:
+                state = walk(m.group(4).strip(), state)
+        return state
+    for i, r in enumerate(roots):
+        walk(str(r), ("", i > 0))
+    return out

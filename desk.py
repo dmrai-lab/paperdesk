@@ -29,6 +29,10 @@ Whole-paper checks (LaTeX desks):
     python desk.py dedup [--top N]     the claims the paper makes more than once: the N (60) most alike sentences from
                                        different places, and the claims made three times or more, for a reviewer to
                                        judge; also written to dedup.json beside the config, with each side's quote
+    python desk.py citestats           citation keys per 1000 words per section against the papers of the field named
+                                       in [citations] corpus (arXiv ids; their sources are fetched once)
+    python desk.py uncited [--top N]   the uncited sentences the field would have cited, by a classifier learnt from
+                                       those papers; also written to uncited.json, with each sentence's quote
 """
 import json
 import sys
@@ -101,8 +105,19 @@ def line_of(c):
             + f"\n    quote: \"{q}\"\n    {c['text']}{sug}")
 
 
+def _cap_threads(n):
+    """At most ``n`` threads for the numerical libraries, set before numpy loads: a BLAS left alone starts one thread
+    per core, which on a shared machine is everyone's cores."""
+    import os
+    for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(k, str(n))
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # the tokenizer's own pool, one thread per core otherwise
+
+
 def main(argv):
     cmd = argv[0] if argv else "list"
+    if cmd in ("dedup", "citestats", "uncited"):
+        _cap_threads(int(_CFG.get("citations" if cmd != "dedup" else "dedup", {}).get("threads", 8)))
     if cmd == "list":
         argv = list(argv); who = _opt(argv, "--author")
         want = None if "--all" in argv else ("proposed" if "--proposed" in argv else "open")
@@ -228,6 +243,30 @@ def main(argv):
                          CONFIG.parent / ".dedup_cache.npz", top, int(opts.get("threads", 8)))
         dedup.save(res, CONFIG.parent / "dedup.json")
         print(dedup.report(res))
+    elif cmd in ("citestats", "uncited"):
+        # how the paper cites against its field; citations.py says how
+        import citations
+        import prose
+        argv = list(argv[1:]); opts = _CFG.get("citations", {})
+        ids = (_opt(argv, "--corpus") or "").split(",") if "--corpus" in argv else opts.get("corpus", [])
+        if not ids:
+            raise SystemExit("name the field's papers: [citations] corpus = [\"arXiv id\", ...] in the config, or --corpus id,id")
+        cache = CONFIG.parent / ".citecorpus"
+        print(f"the field: {len(ids)} arXiv papers", file=sys.stderr)
+        field = citations.corpus(ids, cache, log=lambda m: print(m, file=sys.stderr))
+        mine = prose.paper_sentences(PAPER, [d.file for d in DOCS if d.file.endswith(".tex")])
+        if cmd == "citestats":
+            print(citations.stats_report(citations.profile(mine), citations.norm([citations.profile(v) for v in field.values()]),
+                                         len(field)))
+        else:
+            import dedup
+            top = int(_opt(argv, "--top") or 80)
+            emb = lambda texts: dedup.embed(texts, opts.get("model", citations.MODEL), cache / "embeddings.npz",
+                                            int(opts.get("threads", 8)))
+            flagged, auc, thr = citations.uncited(mine, field, emb, top=top)
+            (CONFIG.parent / "uncited.json").write_text(json.dumps(citations.uncited_json(flagged), indent=1, ensure_ascii=False))
+            print(citations.uncited_report(flagged, auc, thr, sum(bool(s.cites) for s in mine
+                                                                 if citations.section_class(s) in citations.SCORED)))
     else:
         print(__doc__)
 

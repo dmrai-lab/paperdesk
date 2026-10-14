@@ -13,3 +13,5 @@ comments.lock
 .anchored_mtime
 dedup.json
 .dedup_cache.npz
+uncited.json
+.citecorpus/

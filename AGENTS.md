@@ -25,6 +25,14 @@ You are the editor of the document this desk serves; the reviewer comments on th
    occurrence that should go: `--category duplicate --severity minor` (`major` when the copies disagree, which says
    so), the quote from `dedup.json`, the text naming where the claim stays, and `--suggest` the cut or the shortened
    sentence.
+7. Asked for missing citations: `python desk.py citestats` shows where the paper cites less than its field, and
+   `python desk.py uncited` lists the uncited sentences that read to the field like ones that cite. For each, read
+   its paragraph and decide: a claim of prior work, a known method, a dataset, a tool or an established fact needs a
+   citation; the paper's own derivation, measurement or result does not; a citation elsewhere in the paragraph that
+   covers it is enough. Post each real gap as `--category uncited --severity minor` (`major` for a claim the paper's
+   argument rests on), the quote from `uncited.json`, the text saying what kind of source is needed (the original
+   method, a review, the dataset's paper, the tool's paper), and in `--suggest` a reference only when you know it
+   exists: the author reads at least its abstract before it is cited.
 
 A desk other than the one beside these files: pass its config first, `python desk.py path/to/paperdesk.toml watch`.
 A desk with several documents (`[paper] docs`: a paper and its supplement as tabs) prefixes each anchor in

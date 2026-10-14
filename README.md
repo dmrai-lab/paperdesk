@@ -119,6 +119,32 @@ The sentence model is `[dedup] model` in the config (default `sentence-transform
 threads `[dedup] threads` (8); embeddings are cached by sentence in `.dedup_cache.npz`, so a run after an edit embeds
 only what changed.
 
+## Citations against the field
+
+Prose written with an agent tends to state the field's context without saying who established it. Two commands
+measure that against papers of the paper's own field, named by arXiv identifier in the config:
+
+    [citations]
+    corpus = ["1907.12685", "2001.06529", "2007.04403", ...]    # 15 to 30 papers like yours; PDF-only submissions are skipped
+
+    python desk.py citestats            # citation keys per 1000 words, per section class, against the field's median and quartiles
+    python desk.py uncited --top 80     # the uncited sentences the field would have cited; uncited.json holds each one's quote
+
+Both read the corpus's LaTeX sources (fetched once from arXiv into `.citecorpus/`, three seconds apart as arXiv
+asks; nothing of the paper is sent anywhere) through the same sentence splitter as the paper, so both sides are
+counted alike. Sections are classed by their titles: introduction, theory, methods, results, discussion, conclusion,
+appendix (after `\appendix`, or any document after the first), the front matter, and the statements (availability,
+funding, contributions), which are left out. `citestats` adds the share of paragraphs that cite nothing.
+
+`uncited` learns what the field cites from the corpus itself: each of its sentences is embedded by CiteBERT
+(`copenlu/citebert`, SciBERT trained further on cite-worthiness), labelled by whether it cites, and a logistic
+regression on the embedding and the section class learns the label. The area under the ROC curve on each corpus
+paper held out says how well it learnt. An uncited sentence of the paper is flagged when it scores above the median
+of the paper's own cited sentences, and whether its paragraph cites elsewhere is shown beside it. A flag is a
+question, not a verdict: the paper's own results need no citation. Whoever judges (`AGENTS.md`) posts the real gaps
+as `proposed` comments of category `uncited`. Needs `pip install sentence-transformers`; `[citations] model` and
+`threads` as for `dedup`.
+
 ## A Word document
 
 Point `main` at a `.docx` (or set `kind = "docx"`) and make `build` the conversion to PDF, which LibreOffice does

@@ -32,3 +32,9 @@ glossary = "diffusion MRI, Monte Carlo, LaTeX, figure, table, caption, methods, 
 # desk.py dedup: the claims the paper makes more than once (pip install sentence-transformers)
 # model = "sentence-transformers/all-mpnet-base-v2"   # any sentence-transformers model trained on paraphrases
 # threads = 8                       # CPU threads for embedding
+
+[citations]
+# desk.py citestats / uncited: how the paper cites against papers of its field (arXiv ids with LaTeX source)
+# corpus = ["1907.12685", "2001.06529", "2007.04403"]
+# model = "copenlu/citebert"
+# threads = 8
