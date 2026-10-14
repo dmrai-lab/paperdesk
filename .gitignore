@@ -21,3 +21,4 @@ refcheck.json
 .refcheck.json
 brevity.json
 .brevity_cache.npz
+brevity_build/
